@@ -9,10 +9,11 @@ use std::process::ExitCode;
 
 use clap::{CommandFactory, Parser};
 use fraise::compatibility::CompatibilityTable;
-use fraise::config::{self, Config};
+use fraise::config::Config;
 use fraise::dispatch::{Dispatcher, Tolerance};
 use fraise::doctor;
 use fraise::envelope::{Asked, Envelope, Payload, PayloadKind};
+use fraise::interpolation::Process;
 
 use crate::cli::{Cli, Command, ConfigCommand, PayloadMode};
 
@@ -47,7 +48,7 @@ fn show_config(table: &'static CompatibilityTable, cli: &Cli) -> ExitCode {
         // yet, and it is the same unmet precondition a dispatch would refuse with.
         Err(problem) => return report_problem(cli, command, table.refusal_class().exit(), problem),
     };
-    let loaded = match Config::at(&directory).and_then(|config| config.resolve(&config::Process)) {
+    let loaded = match Config::at(&directory).and_then(|config| config.resolve(&Process)) {
         Ok(loaded) => loaded,
         Err(problem) => {
             return report_problem(cli, command, problem.exit(), problem.message().to_owned());

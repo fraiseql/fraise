@@ -18,11 +18,12 @@
 //! a mapping row onto a class the contract does not define, a class given to two exits —
 //! so the guard is in force at load rather than discovered on a live dispatch.
 //!
-//! The face's own refusals are in that section too, as [`Refusal`]: a `fraise.toml` nothing
-//! can act on is a failure of `fraise` rather than of a tool, and saying what it comes to is
-//! the same kind of statement as saying what fraiseql's exit 2 comes to. Keeping them here is
-//! what makes the umbrella's exits one taxonomy in one document, rather than a class name
-//! written wherever a refusal happens.
+//! The face's own refusals are in that section too, as [`Refusal`]: a machine that does not
+//! satisfy the compatibility table and a `fraise.toml` nothing can act on are failures of
+//! `fraise` rather than of a tool, and saying what they come to is the same kind of statement as
+//! saying what fraiseql's exit 2 comes to. They are here rather than in the documents that
+//! discover them, so that one document in the tree names a class and the source names only
+//! refusals — a second place naming classes is a second taxonomy waiting to disagree.
 //!
 //! The freshness test below compares the confiture half **whole** against what the
 //! pinned confiture emits, and **fails rather than skips** when confiture is missing or
@@ -97,17 +98,21 @@ impl<'a> ExitClass<'a> {
 /// naming every one of them, so a refusal that could not be given an exit fails at load.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Refusal {
+    /// This machine does not satisfy the compatibility table: a tool is absent, or is at a
+    /// version nothing measured. `doctor` reports it and the version guard refuses on it.
+    Compatibility,
     /// `fraise.toml` is not a document this face can act on.
     Configuration,
 }
 
 impl Refusal {
     /// Every refusal the binary can make, which is what the document must speak for.
-    const ALL: [Self; 1] = [Self::Configuration];
+    const ALL: [Self; 2] = [Self::Compatibility, Self::Configuration];
 
     /// The key this refusal has in the contract's `mappings.refusals` section.
     const fn key(self) -> &'static str {
         match self {
+            Self::Compatibility => "compatibility_unsatisfied",
             Self::Configuration => "invalid_configuration",
         }
     }
@@ -206,11 +211,11 @@ impl ExitTable {
 
     /// The class of that name, or `None` when the contract defines none.
     ///
-    /// Crate-private, and only for a document of ours that names a class — the compatibility
-    /// table names the class it refuses with, and resolving it here is what keeps the
-    /// umbrella's one exit taxonomy in this contract. A caller outside holds an [`ExitClass`]
-    /// rather than a name.
-    pub(crate) fn class_named(&self, name: &str) -> Option<ExitClass<'_>> {
+    /// Private: a name is how this document refers to a class, and nothing outside gets to
+    /// hold one. Every caller reaches a class through what it is asking about — a confiture
+    /// exit, a tool's exit, or one of the face's own refusals — so there is no path by which a
+    /// class name could be written in the source and resolved here.
+    fn class_named(&self, name: &str) -> Option<ExitClass<'_>> {
         let (exit, entry) = self.exits.iter().find(|(_, entry)| entry.class == name)?;
         Some(ExitClass {
             name: &entry.class,
@@ -397,7 +402,7 @@ struct Unlisted {
 
 #[cfg(test)]
 mod tests {
-    use super::{ExitTable, VENDORED};
+    use super::{ExitTable, Refusal, VENDORED};
 
     /// D7's mapping, written in the decision's own vocabulary — a tool's raw exit, the
     /// error class it reports when it reports one, and the **confiture exit integer** the
@@ -500,6 +505,77 @@ mod tests {
             error.contains("more than one exit"),
             "the refusal should say the class is not one-to-one: {error}"
         );
+    }
+
+    #[test]
+    fn a_refusal_classed_as_something_the_contract_does_not_define_is_refused() {
+        let source = doctored(|document| {
+            document["mappings"]["refusals"]["reasons"]["invalid_configuration"]["class"] =
+                serde_json::Value::from("catastrophe");
+        });
+        let error = ExitTable::parse(&source).expect_err("the class is not in the contract");
+        assert!(
+            error.contains("catastrophe") && error.contains("classes"),
+            "the refusal should name the class and where it should have been listed: {error}"
+        );
+    }
+
+    #[test]
+    fn a_refusal_the_binary_makes_and_the_document_does_not_class_is_refused() {
+        // The failure this prevents is a refusal with no exit, discovered at the moment it is
+        // being made — which is the moment a caller has the least to go on.
+        let source = doctored(|document| {
+            document["mappings"]["refusals"]["reasons"]
+                .as_object_mut()
+                .expect("the reasons are an object")
+                .remove("invalid_configuration");
+        });
+        let error = ExitTable::parse(&source).expect_err("a refusal has no class");
+        assert!(
+            error.contains("invalid_configuration"),
+            "the refusal should name the one that would have no exit: {error}"
+        );
+    }
+
+    #[test]
+    fn a_refusal_the_binary_does_not_make_is_refused_rather_than_ignored() {
+        // The other direction, and the reason the keys are the binary's: a classed refusal
+        // nothing reads is a decision recorded where a reader would take it for one in force.
+        let source = doctored(|document| {
+            // Classed as something the contract does define, so what is refused is the key and
+            // not the class — and taken from the document, so this test names no class either.
+            let classed =
+                document["mappings"]["refusals"]["reasons"]["invalid_configuration"]["class"]
+                    .clone();
+            document["mappings"]["refusals"]["reasons"]["spilled_the_jam"] = serde_json::json!({
+                "class": classed,
+                "why": "a refusal this fraise has never heard of",
+            });
+        });
+        let error = ExitTable::parse(&source).expect_err("the binary makes no such refusal");
+        assert!(
+            error.contains("spilled_the_jam"),
+            "the refusal should name the key nothing reads: {error}"
+        );
+    }
+
+    #[test]
+    fn every_refusal_the_binary_makes_reads_as_a_class_of_the_contract() {
+        // What the accessor promises, said for each variant rather than for the one a test
+        // happened to reach: `refusal` is infallible because `parse` has already been through
+        // this list.
+        let table = ExitTable::vendored();
+        for which in Refusal::ALL {
+            let class = table.refusal(which);
+            assert_eq!(
+                table.class_of_exit(class.exit()),
+                Some(class),
+                "{which:?} reads as {} which is not the class of exit {}",
+                class.name(),
+                class.exit()
+            );
+            assert_ne!(class.exit(), 0, "{which:?} is a refusal, not a success");
+        }
     }
 
     #[test]

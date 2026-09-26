@@ -11,9 +11,10 @@
 //! the version it just read is allowed. They share [`CompatibilityTable`] so there is no
 //! second reading of the same file to disagree with the first.
 //!
-//! The table names the class it refuses with, and this loader resolves that name against
-//! confiture's frozen contract in [`crate::exit_table`]: one exit taxonomy for the whole
-//! umbrella, and a refusal class the contract does not define cannot load.
+//! What it exits with when the machine does not oblige is not in this document: it is
+//! [`Refusal::Compatibility`], classed in confiture's frozen contract in
+//! [`crate::exit_table`]. One exit taxonomy for the whole umbrella, named in the one place
+//! that already holds it.
 //!
 //! The judgement lives here too. [`Tool::judge`] turns what
 //! [`crate::tool_version::read`] measured into a [`Verdict`], so `doctor` and the guard
@@ -26,7 +27,7 @@ use std::sync::OnceLock;
 use semver::{Version, VersionReq};
 use serde::{Deserialize, Serialize};
 
-use crate::exit_table::{ExitClass, ExitTable};
+use crate::exit_table::{ExitClass, ExitTable, Refusal};
 use crate::tool_version::Reading;
 
 /// The table, compiled into the binary so a released `fraise` carries the table its tests
@@ -48,9 +49,8 @@ impl CompatibilityTable {
     ///
     /// # Panics
     ///
-    /// If the vendored table is not a document this loader accepts, or names a refusal class
-    /// the exit contract does not define. It is compiled in, so that is a build the tests
-    /// below would have failed before it ever shipped.
+    /// If the vendored table is not a document this loader accepts. It is compiled in, so that
+    /// is a build the tests below would have failed before it ever shipped.
     #[must_use]
     pub fn vendored() -> &'static Self {
         static TABLE: OnceLock<CompatibilityTable> = OnceLock::new();
@@ -84,19 +84,11 @@ impl CompatibilityTable {
     ///
     /// Checked at load rather than at the point of use, so a row that could vouch for a
     /// version nobody measured cannot exist: a range has to parse, a tool that has releases
-    /// has to say how to install one, a tool awaiting its first release must claim neither,
-    /// and the refusal class has to be one `contract` defines.
+    /// has to say how to install one, and a tool awaiting its first release must claim
+    /// neither. `contract` is what the refusal class comes from.
     fn parse(source: &str, contract: &'static ExitTable) -> Result<Self, String> {
         let document: Document = toml::from_str(source)
             .map_err(|error| format!("this is not a compatibility table: {error}"))?;
-
-        let refusal = contract.class_named(&document.refusal.class).ok_or_else(|| {
-            format!(
-                "the table refuses with {}, which the exit contract does not define, so a \
-                 refusal would have no exit",
-                document.refusal.class
-            )
-        })?;
 
         let mut tools = BTreeMap::new();
         for (name, row) in document.tools {
@@ -136,7 +128,10 @@ impl CompatibilityTable {
             );
         }
 
-        Ok(Self { tools, refusal })
+        Ok(Self {
+            tools,
+            refusal: contract.refusal(Refusal::Compatibility),
+        })
     }
 }
 
@@ -275,18 +270,7 @@ struct Allowed {
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Document {
-    refusal: Refusal,
     tools: BTreeMap<String, Row>,
-}
-
-/// The class `fraise` exits with when the table is not satisfied.
-#[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct Refusal {
-    class: String,
-    // Reason: read by a person reading the document, not by the loader.
-    #[allow(dead_code)]
-    why: String,
 }
 
 /// One row as it is written.
@@ -308,7 +292,7 @@ mod tests {
     use semver::Version;
 
     use super::{CompatibilityTable, DOCUMENT, Verdict};
-    use crate::exit_table::ExitTable;
+    use crate::exit_table::{ExitTable, Refusal};
     use crate::tool_version::Reading;
 
     fn parse(source: &str) -> Result<CompatibilityTable, String> {
@@ -318,10 +302,6 @@ mod tests {
     /// A minimal table to doctor for the refusals below: small enough that what each case
     /// changes is the only thing it says.
     const MINIMAL: &str = r#"
-        [refusal]
-        class = "precondition_failed"
-        why = "a tool that is absent is a precondition that was not met"
-
         [tools.confiture]
         program = "confiture"
         versions = ">=1.19.0, <1.20.0"
@@ -432,13 +412,13 @@ mod tests {
     }
 
     #[test]
-    fn a_refusal_class_the_exit_contract_does_not_define_is_refused() {
-        let source = MINIMAL.replace("precondition_failed", "catastrophe");
-        let error = parse(&source).expect_err("the class is not in the contract");
-        assert!(
-            error.contains("catastrophe") && error.contains("exit contract"),
-            "the refusal should name the class and where it should have been defined: {error}"
-        );
+    fn the_class_this_table_refuses_with_comes_from_the_contract() {
+        // Not from this document: it is the face's own `compatibility_unsatisfied` refusal, and
+        // the contract is what gives it an exit. `doctor` prints that exit and the guard exits
+        // with it, so a table that answered for it here would be a second taxonomy.
+        let refusal = CompatibilityTable::vendored().refusal_class();
+        assert_eq!(refusal, ExitTable::vendored().refusal(Refusal::Compatibility));
+        assert_ne!(refusal.exit(), 0, "a refusal is not a success: {refusal:?}");
     }
 
     #[test]

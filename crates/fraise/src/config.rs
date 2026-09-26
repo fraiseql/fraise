@@ -12,31 +12,20 @@
 //! nobody asked for.
 //!
 //! **A connection string never enters the file.** An environment names the *variable* that
-//! carries its DSN — `database_url_env`, whose value must be an environment variable's name —
-//! so a password cannot be committed by writing it here, and `fraise` reads the variable at the
-//! moment it runs a tool. The refusal that enforces it prints the key and never the value: a
-//! refusal that quoted the DSN would put it in the log the rule exists to keep it out of.
+//! carries its DSN — `database_url_env`, whose value must be an environment variable's name, in
+//! the same strict form [`crate::interpolation`] expands — so a password cannot be committed by
+//! writing it here, and `fraise` reads the variable at the moment it runs a tool. The refusal
+//! that enforces it prints the key and never the value: a refusal that quoted the DSN would put
+//! it in the log the rule exists to keep it out of.
 //!
-//! The `${VAR}` rule is confiture's, copied rather than invented, because `fraise` renders
-//! confiture's YAML: a form accepted here and rejected there is a document that loads and
-//! then fails one layer down. Measured against the pinned confiture
-//! (`confiture.config._env_vars`, byte-identical in 1.19.0 and 1.23.1):
-//!
-//! | written | confiture | `fraise` |
-//! |---|---|---|
-//! | `${A}` with `A` set | expands | expands |
-//! | `${A}` with `A` unset | refuses | refuses |
-//! | `${lower}`, `${1A}` | refuses, naming the strict form | the same |
-//! | `${A:-default}` | refuses; bash defaults are not supported | the same |
-//! | `${}` | refuses | the same |
-//! | `$A` | left alone: only `${…}` is a reference | the same |
-//! | a value that expands into `${…}` | refuses; expansion is single-pass | the same |
-//! | `${A} ${B` (unclosed, after a closed one) | **expands and leaves `${B`** | **refuses** |
-//!
-//! The last row is the one difference, and it is deliberate. Confiture checks for an unclosed
-//! `${` only at the first one in the value, so a second can survive into the rendered file; the
-//! direction that has to be safe is this one, since a document `fraise` accepts must be one
-//! confiture accepts and not the reverse. Nothing here leaves a `${` in a resolved value.
+//! What is expanded and what is read as written is the one thing to know beyond that. The
+//! passthrough tables are the tools' own settings, and a host, a port or a token in one of them
+//! legitimately comes from the environment, so every string in them is expanded. The fields
+//! `fraise` reads itself — a project's name, the environment to default to, the name of a
+//! variable — are read as written and refuse a `${…}`, because they are resolved against this
+//! document rather than against the machine, and a file whose own names need an environment to
+//! be read is a file nobody can read. Between them, no string in a loaded document keeps an
+//! unexpanded reference.
 
 use std::collections::BTreeMap;
 use std::fmt;
@@ -48,6 +37,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::envelope::Payload;
 use crate::exit_table::{ExitTable, Refusal};
+use crate::interpolation::{self, Vars};
 
 /// The file's name.
 ///
@@ -55,31 +45,6 @@ use crate::exit_table::{ExitTable, Refusal};
 /// would mean a verb whose configuration depends on where it was invoked from, and the
 /// umbrella's directory is a decision its caller makes explicitly.
 pub const FILE: &str = "fraise.toml";
-
-/// Where a `${VAR}` is looked up.
-///
-/// A trait rather than a call to [`std::env`], so that a test states the environment it means
-/// instead of mutating the one its process shares with every other test in the binary.
-pub trait Vars {
-    /// The value of `name`, or `None` when it is not set.
-    fn get(&self, name: &str) -> Option<String>;
-}
-
-/// The process's own environment, which is what the binary resolves against.
-#[derive(Debug, Clone, Copy)]
-pub struct Process;
-
-impl Vars for Process {
-    fn get(&self, name: &str) -> Option<String> {
-        std::env::var(name).ok()
-    }
-}
-
-impl Vars for BTreeMap<String, String> {
-    fn get(&self, name: &str) -> Option<String> {
-        self.get(name).cloned()
-    }
-}
 
 /// Why `fraise` will not act on a configuration.
 ///
@@ -424,28 +389,6 @@ struct Document {
     specql: Option<toml::Table>,
 }
 
-/// Whether `text` is the name of an environment variable, in the strict form confiture's
-/// `${VAR}` accepts: `[A-Z_][A-Z0-9_]*`.
-fn is_variable_name(text: &str) -> bool {
-    let mut characters = text.chars();
-    characters
-        .next()
-        .is_some_and(|first| first.is_ascii_uppercase() || first == '_')
-        && characters.all(|character| {
-            character.is_ascii_uppercase() || character.is_ascii_digit() || character == '_'
-        })
-}
-
-/// Whether `text` is a plain identifier, which is the only shape of a rejected value that is
-/// safe to quote back: anything holding a `:`, a `/` or a `@` may be a connection string.
-fn is_plain_identifier(text: &str) -> bool {
-    let mut characters = text.chars();
-    characters
-        .next()
-        .is_some_and(|first| first.is_ascii_alphabetic() || first == '_')
-        && characters.all(|character| character.is_ascii_alphanumeric() || character == '_')
-}
-
 /// Whether `text` can name an environment, which is also a file name in `db/environments/`.
 fn is_environment_name(text: &str) -> bool {
     text.chars()
@@ -480,7 +423,7 @@ fn unexpanded(at: &str, value: &str) -> Result<(), Problem> {
 /// This is the rule that keeps a DSN out of `fraise.toml`, so its refusal is careful about what
 /// it prints: the key always, the value only when it cannot be a connection string.
 fn check_variable_name(at: &str, value: &str) -> Result<(), Problem> {
-    if is_variable_name(value) {
+    if interpolation::is_variable_name(value) {
         return Ok(());
     }
     if value.contains("${") {
@@ -497,7 +440,7 @@ fn check_variable_name(at: &str, value: &str) -> Result<(), Problem> {
              variable where the command runs"
         )));
     }
-    let quoted = if is_plain_identifier(value) {
+    let quoted = if interpolation::is_plain_identifier(value) {
         format!(" ({value:?}, did you mean {:?}?)", value.to_ascii_uppercase())
     } else {
         String::new()
@@ -533,7 +476,7 @@ fn expand_value(
 ) -> Result<toml::Value, Problem> {
     match value {
         toml::Value::String(text) => {
-            let (resolved, used) = expanded_string(text, at, vars)?;
+            let (resolved, used) = interpolation::expanded(text, at, vars).map_err(Problem::new)?;
             if !used.is_empty() {
                 from_env.insert(at.to_owned(), used);
             }
@@ -550,82 +493,6 @@ fn expand_value(
             .map(toml::Value::Array),
         other => Ok(other.clone()),
     }
-}
-
-/// One string, expanded by confiture's rule, with the variables it read.
-///
-/// The scan is confiture's: anything shaped like a reference is found first and then held to
-/// the strict form, so a near-miss is refused instead of being left in the value for a tool to
-/// receive verbatim. Single-pass, so a value that itself holds a reference is refused rather
-/// than expanded again — and refused without being quoted, since what a variable holds is the
-/// thing this module is careful with.
-fn expanded_string(
-    value: &str,
-    at: &str,
-    vars: &dyn Vars,
-) -> Result<(String, Vec<String>), Problem> {
-    let mut resolved = String::with_capacity(value.len());
-    let mut used = Vec::new();
-    let mut rest = value;
-
-    while let Some(open) = rest.find("${") {
-        resolved.push_str(&rest[..open]);
-        let after = &rest[open + 2..];
-        let Some(close) = after.find('}') else {
-            return Err(Problem::new(format!(
-                "{at} holds a `${{` with no closing `}}`, so what it refers to cannot be read"
-            )));
-        };
-        let name = &after[..close];
-        if !is_variable_name(name) {
-            return Err(Problem::new(diagnosis(name, at)));
-        }
-        let Some(found) = vars.get(name) else {
-            return Err(Problem::new(format!(
-                "{at} refers to ${{{name}}}, which is not set. A missing variable is refused \
-                 rather than expanded to nothing, so a tool is never handed an empty setting"
-            )));
-        };
-        if found.contains("${") {
-            return Err(Problem::new(format!(
-                "{at} refers to ${{{name}}}, whose value holds a reference of its own. Expansion \
-                 is single-pass here as it is in confiture: resolve the nesting in the \
-                 environment rather than in {FILE}"
-            )));
-        }
-        used.push(name.to_owned());
-        resolved.push_str(&found);
-        rest = &after[close + 1..];
-    }
-    resolved.push_str(rest);
-    Ok((resolved, used))
-}
-
-/// Why a reference that is not the strict form is refused, in the terms confiture refuses it.
-fn diagnosis(name: &str, at: &str) -> String {
-    if name.is_empty() {
-        return format!(
-            "{at} holds an empty reference `${{}}`: write `${{A_NAME}}` with the name of a \
-             variable in it"
-        );
-    }
-    if [":-", ":=", ":?", ":+"].iter().any(|shell| name.contains(shell)) {
-        return format!(
-            "{at} holds ${{{name}}}: a shell default is not expanded, here or in confiture. \
-             Write ${{{}}} and set it, or write the value in {FILE}",
-            name.split(':').next().unwrap_or_default()
-        );
-    }
-    let hint = if is_plain_identifier(name) {
-        format!(" Did you mean ${{{}}}?", name.to_ascii_uppercase())
-    } else {
-        String::new()
-    };
-    format!(
-        "{at} holds ${{{name}}}, which is not the name of an environment variable: only \
-         [A-Z_][A-Z0-9_]* is expanded — uppercase letters, digits and underscores, the first not \
-         a digit — which is confiture's rule and so this file's.{hint}"
-    )
 }
 
 /// A table's leaves as dotted paths, in the same spelling a refusal and `from_env` use, so a
@@ -660,5 +527,114 @@ fn collect_leaves(value: &toml::Value, at: &str, into: &mut Vec<(String, String)
         toml::Value::Float(number) => into.push((at.to_owned(), number.to_string())),
         toml::Value::Boolean(yes) => into.push((at.to_owned(), yes.to_string())),
         toml::Value::Datetime(when) => into.push((at.to_owned(), when.to_string())),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::BTreeMap;
+    use std::path::PathBuf;
+
+    use super::{Config, Loaded};
+    use crate::compatibility::{CompatibilityTable, Tool};
+
+    /// A document, read and resolved against a stated environment.
+    fn load(source: &str, vars: &[(&str, &str)]) -> Result<Loaded, String> {
+        let vars: BTreeMap<String, String> = vars
+            .iter()
+            .map(|(name, value)| ((*name).to_owned(), (*value).to_owned()))
+            .collect();
+        Config::read(source, PathBuf::from("fraise.toml"))
+            .and_then(|config| config.resolve(&vars))
+            .map_err(|problem| problem.message().to_owned())
+    }
+
+    #[test]
+    fn a_passthrough_table_exists_for_every_tool_the_umbrella_speaks_for() {
+        // The two documents of this crate have to agree on what the stack is: a tool `fraise`
+        // dispatches to and has no table for would be a tool nobody can configure through the
+        // one config file, and a table for a tool the umbrella does not speak for would be
+        // settings nothing ever reads.
+        let loaded =
+            load("[project]\nname = \"p\"\n[confiture]\n[fraiseql]\n[fraisier]\n[specql]\n", &[])
+                .expect("the document is whole");
+        let named: Vec<&str> = CompatibilityTable::vendored().tools().map(Tool::name).collect();
+        for tool in &named {
+            assert!(loaded.settings(tool).is_some(), "{tool} has no passthrough table");
+        }
+        assert_eq!(loaded.written.len(), named.len(), "and there are no others: {named:?}");
+    }
+
+    #[test]
+    fn a_reference_is_found_wherever_a_tools_own_table_puts_one() {
+        // A tool's table is the tool's shape, not ours, so the walk goes through nested tables
+        // and arrays — and the path it records is the one a refusal names and a reader greps.
+        let loaded = load(
+            "[project]\nname = \"p\"\n\n[confiture]\nurl = \"${HOOK}\"\nhosts = [\"${PGHOST}\", \
+             \"replica\"]\n\n[confiture.notifications]\nto = \"${MAILBOX}\"\n",
+            &[
+                ("HOOK", "https://hooks"),
+                ("PGHOST", "db.internal"),
+                ("MAILBOX", "ops@example"),
+            ],
+        )
+        .expect("every reference resolves");
+
+        let paths: Vec<&str> = loaded.from_env.keys().map(String::as_str).collect();
+        assert_eq!(
+            paths,
+            [
+                "confiture.hosts[0]",
+                "confiture.notifications.to",
+                "confiture.url"
+            ],
+            "{:?}",
+            loaded.from_env
+        );
+        assert_eq!(
+            loaded.settings("confiture").and_then(|table| table["url"].as_str()),
+            Some("https://hooks"),
+            "the settings a tool is handed are the resolved ones"
+        );
+        assert_eq!(
+            loaded.view().tools["confiture"]["url"].as_str(),
+            Some("${HOOK}"),
+            "and what a reader is shown is the reference"
+        );
+    }
+
+    #[test]
+    fn a_field_fraise_reads_itself_refuses_a_reference_rather_than_keeping_it() {
+        // The other half of "no string in a loaded document keeps an unexpanded reference": the
+        // passthrough tables expand, and the face's own fields refuse. Neither leaves one.
+        let refusal = load("[project]\nname = \"${PROJECT}\"\n", &[("PROJECT", "p")])
+            .expect_err("project.name is not expanded");
+        assert!(refusal.contains("project.name"), "{refusal}");
+    }
+
+    #[test]
+    fn an_environment_whose_name_could_not_be_a_file_name_is_refused() {
+        // Phase 03 renders `db/environments/<name>.yaml`, so a name is held to what a file name
+        // can be before anything is written — including the traversal a `..` would be.
+        let refusal = load(
+            "[project]\nname = \"p\"\n\n[environments.\"../../etc\"]\ndatabase_url_env = \"DB\"\n",
+            &[],
+        )
+        .expect_err("that cannot name a file");
+        assert!(refusal.contains("../../etc") && refusal.contains("file name"), "{refusal}");
+    }
+
+    #[test]
+    fn an_environment_is_the_name_of_a_variable_and_a_lowercase_one_is_named_back() {
+        let refusal = load(
+            "[project]\nname = \"p\"\n\n[environments.local]\ndatabase_url_env = \"database_url\"\n",
+            &[],
+        )
+        .expect_err("a name is the strict form");
+        assert!(
+            refusal.contains("environments.local.database_url_env")
+                && refusal.contains("DATABASE_URL"),
+            "the refusal names the key and the name it probably meant: {refusal}"
+        );
     }
 }

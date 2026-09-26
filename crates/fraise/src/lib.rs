@@ -9,6 +9,7 @@ pub mod dispatch;
 pub mod doctor;
 pub mod envelope;
 pub mod exit_table;
+pub mod interpolation;
 pub mod tool_version;
 
 // Reason: the source of this crate, read by the two tests whose claim is about the shape of

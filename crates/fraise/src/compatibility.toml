@@ -19,17 +19,10 @@
 # 2.14.1 prints `fraiseql 2.14.1`, fraisier 1.0.0-beta.11 prints `fraisier 1.0.0-beta.11`,
 # and the retired Python fraisier still on some machines prints `fraisier, version 0.8.3`.
 
-[refusal]
-# What `fraise` exits with when this table is not satisfied, named as one of the classes
-# confiture's frozen contract defines (`exit_table.vendored.json`) so the umbrella has one
-# exit taxonomy rather than two. The loader refuses a class that contract does not list.
-class = "precondition_failed"
-why = """
-A tool that is absent, or at a version nothing vouches for, is a precondition of the \
-command that was not met — not an internal error and not invalid configuration. The \
-version guard refuses a dispatch with this same class, so a caller learns one exit for \
-"this machine is not ready" wherever it is discovered.\
-"""
+# What `fraise` exits with when this table is not satisfied is not written here. It is one of
+# the face's own refusals, `compatibility_unsatisfied`, classed in confiture's frozen contract
+# (`exit_table.vendored.json`, under `mappings.refusals`) beside every other reading of that
+# taxonomy — so one document in this tree names a class, and this one is about versions.
 
 [tools.confiture]
 program = "confiture"

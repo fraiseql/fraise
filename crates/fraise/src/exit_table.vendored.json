@@ -124,6 +124,10 @@
     "refusals": {
       "note": "The refusals `fraise` makes on its own account, read as classes above. A refusal is what one of this face's own failures means in confiture's taxonomy, so it is a reading of this contract and belongs beside the readings of each tool's exits. Every class named here must be one the `classes` list names, and the loader refuses a document that does not give a class to each refusal the binary can make, so a refusal with no exit cannot exist. The keys are the binary's: adding or renaming one is a change to the source and to this document together, and a key the binary does not know is refused rather than ignored.",
       "reasons": {
+        "compatibility_unsatisfied": {
+          "class": "precondition_failed",
+          "why": "A tool that is absent, or at a version nothing vouches for, is a precondition of the command that was not met \u2014 not an internal error and not invalid configuration. `doctor` reports it and the version guard refuses a dispatch with the same class, so a caller learns one exit for \"this machine is not ready\" wherever it is discovered."
+        },
         "invalid_configuration": {
           "class": "invalid_config",
           "why": "A `fraise.toml` this face cannot act on is invalid configuration, which is what confiture's own meaning for this class names first. It covers a document that is not TOML, a key nothing reads, an environment naming a connection string where the name of a variable belongs, and a ${VAR} that is not set or is written in a form confiture would not expand. In every one of them the file is what has to change, not the machine and not the database, which is what tells this class from precondition_failed."
