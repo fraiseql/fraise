@@ -11,12 +11,12 @@ this file and the phase file were committed before the ignore rule could take ef
 they are in the branch's history and would merge into `main`. Untracking them is a
 decision, not a cleanup, and it is the founder's.
 
-Rather than a claim: `git ls-files .phases` lists two files today.
+Rather than a claim: `git ls-files .phases` lists what is tracked.
 
 | Phase | Title | Status |
 |---|---|---|
 | 02 | The binary | [x] Complete 2026-09-26 — six cycles, PR #2 up for review, #1 closed |
-| 03 | One config (`fraise.toml`, `config sync --check`) | [ ] |
+| 03 | One config (`fraise.toml`, `config sync --check`) | [~] Cycle 1 on `phase-03/one-config` |
 | 04 | One layout (`db/` tenant-zero tree in all three generators) | [ ] |
 | 05 | One JSON, one exit (envelope across all four tools) | [ ] |
 | 06 | The verbs (`init check build migrate deploy status up`, `fraise mcp`) | [ ] |
