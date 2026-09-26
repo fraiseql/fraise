@@ -325,6 +325,62 @@ mod tests {
         assert_eq!(refusal.exit(), CompatibilityTable::vendored().refusal_class().exit());
     }
 
+    /// The crate's source, one file at a time, with each file cut at its tests: test code
+    /// spawns processes for its own reasons, and the claim being checked is about the code that
+    /// ships.
+    fn shipped_source() -> Vec<(String, String)> {
+        fn collect(directory: &std::path::Path, into: &mut Vec<(String, String)>) {
+            let entries = std::fs::read_dir(directory).expect("the source directory is readable");
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if path.is_dir() {
+                    collect(&path, into);
+                } else if path.extension().is_some_and(|extension| extension == "rs") {
+                    let source = std::fs::read_to_string(&path).expect("a source file is read");
+                    let shipped = source
+                        .split_once("#[cfg(test)]")
+                        .map_or_else(|| source.clone(), |(before, _)| before.to_owned());
+                    let name = path
+                        .strip_prefix(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src"))
+                        .expect("under src")
+                        .display()
+                        .to_string();
+                    into.push((name, shipped));
+                }
+            }
+        }
+
+        let mut files = Vec::new();
+        collect(&std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src"), &mut files);
+        assert!(files.len() > 4, "the scan found almost nothing, so it is measuring nothing");
+        files
+    }
+
+    #[test]
+    fn the_guard_is_the_only_path_to_an_exec() {
+        // The invariant the whole cycle rests on, held by a test because convention is what
+        // fails quietly. `unsafe_code` is forbidden in this workspace, so a child process can
+        // only be started one way, and this counts the places that do it: `tool_version` reads
+        // a version, `dispatch` runs a verb behind the guard, and nothing else may exec at all.
+        // A new module that shells out to a tool fails here, which is the point.
+        let spawn = format!("{}::{}", "Command", "new");
+        let allowed = [("tool_version.rs", 1), ("dispatch.rs", 1)];
+
+        for (name, source) in shipped_source() {
+            let found = source.matches(&spawn).count();
+            let expected = allowed
+                .iter()
+                .find(|(allowed, _)| *allowed == name)
+                .map_or(0, |(_, count)| *count);
+            assert_eq!(
+                found, expected,
+                "{name} starts {found} child processes and may start {expected}: reading a \
+                 version belongs in tool_version.rs and running a verb in dispatch.rs, behind \
+                 the guard"
+            );
+        }
+    }
+
     #[test]
     fn an_unknown_tool_is_refused_whatever_the_caller_tolerates() {
         // The hatch is about versions that disagree; a tool the table does not name has no

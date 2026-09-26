@@ -18,7 +18,7 @@ fn main() -> ExitCode {
     let cli = Cli::parse();
     let table = CompatibilityTable::vendored();
 
-    match cli.command {
+    match &cli.command {
         Command::Doctor => {
             let report = doctor::examine(table);
             if cli.json {
@@ -28,42 +28,52 @@ fn main() -> ExitCode {
             }
             exit(report.exit())
         },
-        Command::Tool { tool, args } => {
-            let tolerance = if cli.allow_version_skew {
-                Tolerance::TolerateSkew
-            } else {
-                Tolerance::Refuse
-            };
-            let refused = table.refusal_class().exit();
-            let directory = match working_directory(cli.directory) {
-                Ok(directory) => directory,
-                Err(problem) => {
-                    eprintln!("{problem}");
-                    return exit(refused);
-                },
-            };
+        Command::Tool { tool, args } => dispatch_tool(table, &cli, tool, args),
+    }
+}
 
-            let dispatcher = Dispatcher::new(table, directory, tolerance);
-            match dispatcher.clear(&tool) {
-                Err(refusal) => {
-                    eprintln!("{}", refusal.message());
-                    exit(refusal.exit())
-                },
-                Ok(cleared) => {
-                    // Said before the verb runs, so it is on the terminal even if the tool
-                    // then hangs or floods it. Cycle 5's envelope records it as a field.
-                    if let Some(skew) = cleared.tolerated() {
-                        eprintln!("{skew}");
-                    }
-                    match dispatcher.run(cleared, &args) {
-                        Ok(outcome) => exit(outcome.exit()),
-                        Err(error) => {
-                            eprintln!("fraise could not run {tool}: {error}");
-                            exit(refused)
-                        },
-                    }
-                },
-            }
+/// Hand a verb to one of the tools, with the guard in front of it.
+///
+/// Every exit here is the compatibility table's refusal class but one: what the tool itself
+/// came to, in the umbrella's taxonomy.
+fn dispatch_tool(
+    table: &'static CompatibilityTable,
+    cli: &Cli,
+    tool: &str,
+    args: &[String],
+) -> ExitCode {
+    let refused = table.refusal_class().exit();
+    let directory = match working_directory(cli.directory.clone()) {
+        Ok(directory) => directory,
+        Err(problem) => {
+            eprintln!("{problem}");
+            return exit(refused);
+        },
+    };
+    let tolerance = if cli.allow_version_skew {
+        Tolerance::TolerateSkew
+    } else {
+        Tolerance::Refuse
+    };
+    let dispatcher = Dispatcher::new(table, directory, tolerance);
+
+    let cleared = match dispatcher.clear(tool) {
+        Ok(cleared) => cleared,
+        Err(refusal) => {
+            eprintln!("{}", refusal.message());
+            return exit(refusal.exit());
+        },
+    };
+    // Said before the verb runs, so it is on the terminal even if the tool then hangs or floods
+    // it. Cycle 5's envelope records it as a field.
+    if let Some(skew) = cleared.tolerated() {
+        eprintln!("{skew}");
+    }
+    match dispatcher.run(cleared, args) {
+        Ok(outcome) => exit(outcome.exit()),
+        Err(error) => {
+            eprintln!("fraise could not run {tool}: {error}");
+            exit(refused)
         },
     }
 }
