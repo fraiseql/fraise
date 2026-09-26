@@ -215,6 +215,16 @@ fn a_tool_with_no_pinned_release_needs_the_escape_hatch_even_when_it_is_installe
     let absent = case.fraise(&["tool", "specql", "generate"]);
     assert_eq!(absent.status.code(), Some(REFUSED), "nothing to run: {}", shown(&absent));
 
+    // The hatch tolerates a version the table disagrees with. A tool that is not there is not
+    // a disagreement, so it stays refused however loudly the caller asks.
+    let absent_but_tolerant = case.fraise(&["--allow-version-skew", "tool", "specql", "generate"]);
+    assert_eq!(
+        absent_but_tolerant.status.code(),
+        Some(REFUSED),
+        "there is nothing to tolerate: {}",
+        shown(&absent_but_tolerant)
+    );
+
     case.tool("specql", "specql 2.0.0", 0);
     let installed = case.fraise(&["tool", "specql", "generate"]);
     assert_eq!(
@@ -246,4 +256,33 @@ fn the_tools_exit_arrives_mapped_through_the_contract() {
         "fraiseql's 2 is a validation failure, which the contract numbers 5: {}",
         shown(&output)
     );
+}
+
+/// A version is read once per process, whatever asks for it. A command that crosses several
+/// boundaries checks each one, and paying a process launch per check — or worse, holding two
+/// answers about the same tool inside one command — is what the cache exists to prevent.
+///
+/// Counted by a stub that appends a line every time it runs, reached by its absolute path so
+/// that nothing here depends on `PATH`.
+#[test]
+fn a_tools_version_is_read_once_per_process() {
+    let case = Case::new("cached");
+    let counted = case.bin().join("counted");
+    let log = case.root.join("counted.log");
+    fs::write(
+        &counted,
+        format!("#!/bin/sh\necho ran >>'{}'\necho 'counted 1.2.3'\n", log.display()),
+    )
+    .expect("the stub is written");
+    fs::set_permissions(&counted, fs::Permissions::from_mode(0o755))
+        .expect("the stub is made executable");
+
+    let program = counted.to_str().expect("the path is utf-8");
+    let first = fraise::tool_version::read(program);
+    let second = fraise::tool_version::read(program);
+
+    assert_eq!(first, second, "the same answer both times");
+    assert!(matches!(first, fraise::tool_version::Reading::Version(_)), "{first:?}");
+    let runs = fs::read_to_string(&log).expect("the stub ran at least once");
+    assert_eq!(runs.lines().count(), 1, "it was executed once, and recorded: {runs:?}");
 }

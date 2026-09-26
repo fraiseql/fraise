@@ -10,8 +10,10 @@
 //! [`Reading::Unreadable`] carrying what it printed instead, never a version inferred from
 //! its exit or from silence.
 
+use std::collections::BTreeMap;
 use std::io::ErrorKind;
 use std::process::Command;
+use std::sync::{Mutex, OnceLock, PoisonError};
 
 use semver::Version;
 
@@ -27,9 +29,34 @@ pub enum Reading {
     Unreadable(String),
 }
 
-/// Execute `<program> --version` and read the version out of what it printed.
+/// The version of `program`, read once per process.
+///
+/// A command that crosses several tool boundaries checks each of them, and `doctor` walks all
+/// four, so the reading is cached: executing `--version` again for the same program would cost
+/// a process launch to learn what is already known, and — worse — would let two answers about
+/// the same tool exist inside one command.
+///
+/// The key is the program name alone, because `PATH` does not change under a running process.
+/// A test that needs two different versions of the same program needs two processes, which is
+/// what `tests/guard.rs` does.
 #[must_use]
 pub fn read(program: &str) -> Reading {
+    static READINGS: OnceLock<Mutex<BTreeMap<String, Reading>>> = OnceLock::new();
+
+    let cache = READINGS.get_or_init(|| Mutex::new(BTreeMap::new()));
+    if let Some(known) = cache.lock().unwrap_or_else(PoisonError::into_inner).get(program) {
+        return known.clone();
+    }
+    let reading = measure(program);
+    cache
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+        .insert(program.to_owned(), reading.clone());
+    reading
+}
+
+/// Execute `<program> --version` and read the version out of what it printed.
+fn measure(program: &str) -> Reading {
     let output = match Command::new(program).arg("--version").output() {
         Ok(output) => output,
         Err(error) if error.kind() == ErrorKind::NotFound => return Reading::Missing,

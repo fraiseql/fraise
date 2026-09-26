@@ -13,9 +13,9 @@ it is talking to.
       failing — never skipping — when confiture is absent or unpinned
 - [ ] The per-tool mapping (fraiseql 2 → 5, specql 1 → 4/5 by class, fraisier 1 → 1) is
       **inside that vendored document**, not a `match` statement (D7's condition)
-- [ ] `fraise doctor` finds each of the four binaries and reports its version against the
+- [x] `fraise doctor` finds each of the four binaries and reports its version against the
       compatibility table
-- [ ] **CI installs the four pinned binaries and runs `doctor` against the table**, so the
+- [x] **CI installs the four pinned binaries and runs `doctor` against the table**, so the
       table is in force and not merely configured (D2's condition)
 - [ ] **Every invocation that crosses a tool boundary checks the version first and refuses
       on a skew it has not been told to tolerate** (D2's condition)
@@ -49,7 +49,13 @@ it is talking to.
 *Pattern to copy verbatim: fraisier-core PR #65. Pin the tool, capture the JSON, compare the
 whole document, fail rather than skip.*
 
-### Cycle 3: The compatibility table and `doctor`
+### Cycle 3: The compatibility table and `doctor` — done 2026-09-26, CI green
+*Landed as 4 commits (`87519cb` RED, `fc48bf7` GREEN, `3763994` REFACTOR, `00c4276` CLEANUP).
+`compatibility.toml` + `compatibility.rs` (loader, `Verdict`, `Tool::judge`), `tool_version.rs`
+(the one reader of a `--version`), `doctor.rs` (presentation only), and a `doctor` CI job that
+installs what the table names by reading `doctor --json`. specql is `awaiting_release`: nothing
+publishes one. Ranges are cargo semver, so a `-dev.<sha>` build reads as outside the table.*
+
 - **RED**: `doctor` against stub binaries on a temporary `PATH` — one in-table version, one
   out-of-table — asserting what is reported and the exit. Fails: no `doctor`.
 - **GREEN**: `compatibility.toml` as data (tool → allowed version range, with the reason);
