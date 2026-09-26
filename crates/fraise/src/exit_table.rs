@@ -356,7 +356,7 @@ mod tests {
 
     #[test]
     fn a_tool_the_table_does_not_name_is_not_classified() {
-        // Cycle 4 refuses to dispatch to a tool the table has nothing to say about, so an
+        // The guard refuses to dispatch to a tool the table has nothing to say about, so an
         // unknown tool must be `None` rather than some benign default.
         assert_eq!(ExitTable::vendored().classify("psql", 1, None), None);
     }

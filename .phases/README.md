@@ -10,7 +10,7 @@ the finalize phase leaves no trace of it in the tree.
 
 | Phase | Title | Status |
 |---|---|---|
-| 02 | The binary | [~] Cycles 1–3 landed 2026-09-26 (CI green); Cycles 4–6 open |
+| 02 | The binary | [~] Cycles 1–5 landed 2026-09-26 (CI green); Cycle 6 open |
 | 03 | One config (`fraise.toml`, `config sync --check`) | [ ] |
 | 04 | One layout (`db/` tenant-zero tree in all three generators) | [ ] |
 | 05 | One JSON, one exit (envelope across all four tools) | [ ] |

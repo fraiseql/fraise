@@ -241,7 +241,7 @@ fn a_tool_with_no_pinned_release_needs_the_escape_hatch_even_when_it_is_installe
 }
 
 /// The umbrella has one exit taxonomy, so a tool's own exit arrives mapped: fraiseql's 2 is
-/// `validation_failed`, which is confiture's 5. The raw exit gets its own field in Cycle 5's
+/// `validation_failed`, which is confiture's 5. The raw exit has its own field in the
 /// envelope; the process exit is the mapped one.
 #[test]
 fn the_tools_exit_arrives_mapped_through_the_contract() {

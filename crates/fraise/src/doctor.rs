@@ -74,7 +74,7 @@ impl Finding<'_> {
 #[derive(Debug, Serialize)]
 pub struct Report<'a> {
     // Reason: the table answers for the refusal class and is not part of the payload; the
-    // findings are what a reader and Cycle 5's envelope carry.
+    // findings are what a reader and the envelope carry.
     #[serde(skip)]
     table: &'a CompatibilityTable,
     tools: Vec<Finding<'a>>,

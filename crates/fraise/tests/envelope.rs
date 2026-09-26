@@ -247,8 +247,8 @@ fn a_refusal_is_an_envelope_too() {
     assert_eq!(case.ran("fraiseql"), None, "the verb must not have reached the tool");
 }
 
-/// A tolerated skew is a field rather than a line someone has to notice, which is what Cycle 4
-/// left for this envelope to carry.
+/// A tolerated skew is a field rather than a line someone has to notice, which is what the
+/// guard left for this envelope to carry.
 #[test]
 fn a_tolerated_skew_is_a_field_of_the_envelope() {
     let case = Case::new("tolerated");

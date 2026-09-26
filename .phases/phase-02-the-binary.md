@@ -17,9 +17,9 @@ it is talking to.
       compatibility table
 - [x] **CI installs the four pinned binaries and runs `doctor` against the table**, so the
       table is in force and not merely configured (D2's condition)
-- [ ] **Every invocation that crosses a tool boundary checks the version first and refuses
+- [x] **Every invocation that crosses a tool boundary checks the version first and refuses
       on a skew it has not been told to tolerate** (D2's condition)
-- [ ] The global `--json` envelope carries `ok`, `command`, `tool`, `exit`, `tool_exit`,
+- [x] The global `--json` envelope carries `ok`, `command`, `tool`, `exit`, `tool_exit`,
       `payload`, `payload_kind` — the tool's raw exit beside the mapped one, and the payload
       never heuristically parsed (D3's condition)
 - [ ] `cargo xtask ci` green; release-plz configured; one release tarball built in CI
@@ -64,7 +64,14 @@ publishes one. Ranges are cargo semver, so a `-dev.<sha>` build reads as outside
 - **CLEANUP**: a CI job installs the four pinned binaries and runs `fraise doctor --json`,
   failing the build when the table rejects them — **this is what makes the table a contract**.
 
-### Cycle 4: The version guard on every tool boundary
+### Cycle 4: The version guard on every tool boundary — done 2026-09-26, CI green
+*Landed as 4 commits (`23bc635` RED, `decb1f2` GREEN, `49980ea` REFACTOR, `5fd63bf` CLEANUP).
+`dispatch.rs`: `run` accepts only a `Cleared` that only `clear` hands out; the child's directory
+is always explicit (fraiseql#1387); the hatch covers a disallowed version and not an absent tool
+or an unreadable one — which is how specql is reached until it releases, now in the README. The
+one-exec-path claim is a test over the shipped sources, proven to fail. `fraise tool <name>` is
+the face; `tool_version::read` caches per process.*
+
 - **RED**: a dispatch test where a stub tool's version is outside the table — `fraise`
   refuses **before exec'ing the verb** — and a second where the skew is explicitly tolerated
   (`--allow-version-skew` / `FRAISE_ALLOW_VERSION_SKEW`), which proceeds and records the
@@ -74,7 +81,19 @@ publishes one. Ranges are cargo semver, so a `-dev.<sha>` build reads as outside
   convention.
 - **CLEANUP**: document the refusal's exit class and its escape hatch in the README.
 
-### Cycle 5: The envelope
+### Cycle 5: The envelope — done 2026-09-26, CI green
+*Landed as 4 commits (`0fe5264` RED, `2d458ee` GREEN, `2838cdb` REFACTOR, and this one).
+`envelope.rs`: `Asked` is what `fraise` asked the tool for and the only thing `payload_kind`
+comes from (D3); `--payload <text|json>` on `tool` is how a caller says what its arguments
+asked for, since `fraise` will not read a tool's flags on its behalf. Asked-for JSON that does
+not parse is carried as text and the broken promise is said on stderr. Under `--json` the
+child's stdout is captured and its stderr stays inherited, so progress still streams; without
+`--json` nothing is captured and Cycle 4's behaviour is untouched. A refusal is an envelope
+too. `doctor`'s report is the payload, which moved CI's jq to `.payload.tools[]`. The one-
+serialiser claim is a test over the shipped source, proven to fail, sharing Cycle 4's scan.
+Measured: clap's `requires` does not see a global given before the subcommand, so `--payload`
+enforces its need for `--json` where it is read.*
+
 - **RED**: two stub tools — one emitting JSON in a mode `fraise` asked for, one emitting text
   that *looks* like JSON — assert `payload_kind`, that the text one is **not** parsed, and
   that `exit` (mapped) and `tool_exit` (raw) both appear and can differ. Fails: no envelope.

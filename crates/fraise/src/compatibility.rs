@@ -194,7 +194,7 @@ impl Tool {
     /// Whether `version` is one this `fraise` may talk to.
     ///
     /// A tool awaiting its first release accepts nothing: a build that exists while no
-    /// release does is a version the table cannot vouch for, and Cycle 4's guard refuses it
+    /// release does is a version the table cannot vouch for, and the version guard refuses it
     /// rather than dispatching in the dark.
     #[must_use]
     pub fn accepts(&self, version: &Version) -> bool {

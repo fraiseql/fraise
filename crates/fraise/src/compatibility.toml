@@ -26,7 +26,7 @@
 class = "precondition_failed"
 why = """
 A tool that is absent, or at a version nothing vouches for, is a precondition of the \
-command that was not met — not an internal error and not invalid configuration. Cycle 4's \
+command that was not met — not an internal error and not invalid configuration. The \
 version guard refuses a dispatch with this same class, so a caller learns one exit for \
 "this machine is not ready" wherever it is discovered.\
 """
@@ -77,5 +77,5 @@ newest tag predates the tree this face was measured against, and nothing publish
 binary. The `specql` package on PyPI is the retired v1 Python generator, not this tool, so \
 naming a range would point at the wrong thing. Absent, that is the expected state and \
 `doctor` passes; present, it is a build no release vouches for and `doctor` says so, \
-because Cycle 4's guard will refuse to dispatch to it.\
+because the version guard refuses to dispatch to it.\
 """

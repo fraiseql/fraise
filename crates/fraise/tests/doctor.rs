@@ -4,7 +4,7 @@
 //! each one it is allowed to talk to and `doctor` measures the machine against that
 //! statement. The measurement has to be the real one — exec the program, read what it
 //! prints — so these tests put stub programs on a temporary `PATH` and assert both what
-//! is reported and the exit, which is what Cycle 4's guard will refuse on.
+//! is reported and the exit, which is what the guard refuses on.
 //!
 //! The version strings below are the formats the three installable tools actually print
 //! (`confiture version 1.19.0`, `fraiseql 2.14.1`, `fraisier 1.0.0-beta.11`): three
@@ -208,7 +208,7 @@ fn a_tool_that_is_not_installed_is_reported_missing_with_how_to_install_it() {
 }
 
 /// specql publishes no release `fraise` can name, so its absence passes — but a build of it
-/// on `PATH` is a version nothing vouches for, and Cycle 4's guard will refuse to dispatch
+/// on `PATH` is a version nothing vouches for, and the guard refuses to dispatch
 /// to it. `doctor` says so rather than reporting a green machine.
 #[test]
 fn a_tool_with_no_pinned_release_is_refused_when_one_is_installed_anyway() {

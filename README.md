@@ -10,15 +10,14 @@ exit table instead of four of each.
 
 ## Status
 
-Alpha, and honest about it: `fraise --version`, the exit table, `fraise doctor`
-and the version-guarded `fraise tool` are what exist today. None of the named
-verbs are implemented and the crate is not published. What is being built, in
-order:
+Alpha, and honest about it: `fraise --version`, the exit table, `fraise doctor`,
+the version-guarded `fraise tool` and the `--json` envelope are what exist
+today. None of the named verbs are implemented and the crate is not published.
+What is being built, in order:
 
 | | |
 |---|---|
 | `fraise.toml` | the one file a project author writes; `fraise config sync` renders confiture's YAMLs from it, and `--check` fails on drift |
-| `--json` | one envelope for every command: the tool's raw exit beside the mapped one, and a field saying whether the payload is the tool's JSON or its text |
 | the verbs | `init check build migrate deploy status up`, each documented as the exact tool invocation it performs, so falling back to the tool is always possible |
 
 ## The exit table
@@ -111,6 +110,55 @@ This is also how specql is reached today. No release of it is published, so no
 version of it is vouched for; a local build is refused until you say
 `--allow-version-skew`, and that stays true until specql publishes a release the
 table can name.
+
+## The envelope
+
+Under `--json`, every command answers in one shape, so a machine learns the shape
+once instead of learning four tools' output:
+
+```sh
+fraise --json doctor
+fraise --json tool confiture migrate status
+```
+
+| field | what it means |
+|---|---|
+| `ok` | the command did what it was asked — the mapped `exit` being the contract's success |
+| `command` | the verb of `fraise` that ran |
+| `tool` | the tool it crossed into, or null when it crossed into none |
+| `exit` | what `fraise` exited with, in the umbrella's one taxonomy |
+| `tool_exit` | the tool's own number, unmapped. Null when no tool ran, and null when a signal ended one |
+| `tolerated` | the version skew this command was told to let through, or null |
+| `payload_kind` | `json`, `text` or `none` — what the payload is |
+| `payload` | what `fraise` has to say: the tool's output, `doctor`'s report, or the refusal that stopped the command |
+
+A refusal is a command that answered, so it is an envelope too, with the refusal
+as its payload and a null `tool_exit` because nothing ran to produce one. A tool
+ended by a signal is the other null: it ran and never returned a number, which
+`tool` being named is what tells apart, and `exit` carries the shell's `128 + n`.
+
+### The payload is never guessed at
+
+`fraise` decides a payload is JSON from **what it asked the tool for**, never
+from what came back. Text that looks like JSON is text:
+
+```sh
+fraise --json tool confiture --exit-codes-json                  # payload_kind: text
+fraise --json tool --payload json confiture --exit-codes-json   # payload_kind: json
+```
+
+The two commands produce the same bytes and different envelopes, and the only
+difference is that the second one said what it was asking for. That is the
+caller's to say, because the caller wrote the tool's arguments and is the only
+one who knows whether they asked it for a document; `fraise` will not read a
+tool's flags on its behalf. Being asked is not enough either — output asked for
+as JSON that does not parse is carried as text, and the broken promise is
+reported on standard error rather than absorbed.
+
+Under `--json` the tool's standard output is captured, because an envelope and a
+tool cannot both own standard output. Its standard error is not: a tool that
+streams progress keeps streaming it to the terminal as it is written. Without
+`--json`, nothing is captured and the tool's output is its own.
 
 ## Build
 
