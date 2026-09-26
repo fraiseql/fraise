@@ -41,3 +41,37 @@ jobs:
           echo "$RUNNER_TEMP/confiture-bin" >>"$GITHUB_PATH"
 
       - run: cargo xtask ci
+
+  # A compatibility table nothing runs is a preference, not a contract (D2). This job
+  # installs the releases the table names — reading them out of `fraise doctor --json`, so
+  # there is one reader of the table and the commands in it cannot rot — and then requires
+  # `doctor` to accept what it installed. A row that names an unreachable release, an install
+  # command that has bit-rotted, or a range that no longer matches what the release prints
+  # all fail the build here rather than on a user's machine.
+  doctor:
+    name: doctor
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+
+      - name: Install the releases the table names
+        run: |
+          cargo build --locked --bin fraise
+          mkdir -p "$HOME/.local/bin"
+          echo "$HOME/.local/bin" >>"$GITHUB_PATH"
+          # Exits non-zero precisely because nothing is installed yet, which is the report
+          # this step reads the install commands out of.
+          ./target/debug/fraise doctor --json >doctor-before.json || true
+          jq -r '.tools[] | select(.install != null) | .install' doctor-before.json |
+            while read -r command; do
+              echo "$ $command"
+              sh -c "$command"
+            done
+
+      - name: The table is in force
+        run: |
+          ./target/debug/fraise doctor
+          ./target/debug/fraise doctor --json

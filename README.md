@@ -10,13 +10,13 @@ exit table instead of four of each.
 
 ## Status
 
-Alpha, and honest about it: `fraise --version` and the exit table are what exist
-today. Nothing dispatches yet, no verbs are implemented, and the crate is not
-published. What is being built, in order:
+Alpha, and honest about it: `fraise --version`, the exit table and `fraise doctor`
+are what exist today. Nothing dispatches yet, no verbs are implemented, and the
+crate is not published. What is being built, in order:
 
 | | |
 |---|---|
-| `fraise doctor` | finds each of the four binaries and checks it against a pinned compatibility table, which CI runs the four pinned binaries against |
+| the version guard | every invocation that crosses a tool boundary checks the version first and refuses a skew it has not been told to tolerate |
 | `fraise.toml` | the one file a project author writes; `fraise config sync` renders confiture's YAMLs from it, and `--check` fails on drift |
 | `--json` | one envelope for every command: the tool's raw exit beside the mapped one, and a field saying whether the payload is the tool's JSON or its text |
 | the verbs | `init check build migrate deploy status up`, each documented as the exact tool invocation it performs, so falling back to the tool is always possible |
@@ -38,6 +38,35 @@ installs it before the gate, so the check is one that has actually run. Adopting
 confiture change is one commit that bumps the pin and regenerates the document
 together; either half alone fails. The regeneration command is in the module
 documentation of `crates/fraise/src/exit_table.rs`.
+
+## The compatibility table
+
+The four tools release on four schedules, so `crates/fraise/src/compatibility.toml`
+states which release of each one this `fraise` may talk to, why that is the range,
+and the command that installs an allowed release. `fraise doctor` executes each
+tool's `--version`, reads what it printed and reports it against that statement:
+
+```sh
+fraise doctor          # a line per tool, with the reason and the fix for anything red
+fraise doctor --json   # the same findings for a machine
+```
+
+Six verdicts, of which two satisfy the table. A version outside it, a tool that is
+not installed, a version that cannot be read, and a build of a tool that has no
+release at all are four different facts, and the report keeps them apart because a
+reader acts differently on each. Anything unsatisfied exits with
+`precondition_failed` — the class the table names and the exit contract defines,
+which is the same refusal the version guard will use at a tool boundary.
+
+Ranges are cargo semver, so a locally built `2.14.2-dev.<sha>` reads as outside the
+table rather than as its release: a development build is a version nobody measured,
+and being told so is more useful than a table quietly accepting it. specql is
+marked as awaiting its first release; absent, that passes, and a build of it on
+`PATH` is reported as vouched for by nothing.
+
+CI installs the releases the table names — reading the commands out of
+`doctor --json`, so there is one reader of the table — and then requires `doctor`
+to accept them. That is what makes the table a contract rather than a preference.
 
 ## Build
 
