@@ -1,0 +1,21 @@
+# Build artifacts
+target/
+Cargo.lock.orig
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Environment
+.env
+.env.local
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Development
+.phases/

@@ -1,0 +1,22 @@
+# release-plz configuration — https://release-plz.dev/docs/config
+#
+# Publishing to crates.io and cutting GitHub releases are off until the first alpha ships, so
+# until then the workspace only gets changelog updates. `fraise` is a face over four release
+# trains and has no verbs yet; a published crate that cannot do what its README describes is
+# worse than no crate.
+#
+# Switching it on is three things, and the third is the one that is easy to forget:
+#   1. `publish` and `git_release_enable` to true here.
+#   2. A release-plz workflow, which this repository does not have — `gh secret list` is empty,
+#      so the `fraiseql-promot` App credentials fraisier-core's workflow mints its token from
+#      (`RELEASE_PLZ_APP_ID`, `RELEASE_PLZ_APP_PRIVATE_KEY`) and the crates.io token have to be
+#      added to this repository first. A workflow added before them is a red build on every push
+#      to main.
+#   3. Nothing in `.github/workflows/release.yml`: it already builds a tarball on a tag and
+#      attaches it to a release when one exists, which is what `git_release_enable = true`
+#      starts producing.
+
+[workspace]
+publish = false
+git_release_enable = false
+semver_check = false

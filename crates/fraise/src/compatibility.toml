@@ -1,0 +1,81 @@
+# The compatibility table: which release of each tool this `fraise` may talk to.
+#
+# `fraise doctor` measures the machine against this file, and CI installs exactly the
+# releases named here — by reading this file, so the commands cannot drift from it — and
+# then requires `doctor` to accept them. A row is therefore a claim that is tested rather
+# than a preference, which is the difference between a table and a configuration file.
+#
+# Ranges are cargo's flavour of semver. A prerelease satisfies a range only when one of its
+# comparators names a prerelease of the same version, so a locally built `2.14.2-dev.<sha>`
+# reads as outside the table rather than as its release. That is deliberate: a development
+# build is a version nobody measured, and `doctor` reporting it is more useful than a table
+# quietly accepting it.
+#
+# Every row says why its range is what it is, because a range with no reason is one nobody
+# can safely widen. Widening one is a deliberate act: the release has to be installable, the
+# reason has to still be true, and CI has to pass `doctor` against it.
+#
+# Measured on 2026-09-26: confiture 1.19.0 prints `confiture version 1.19.0`, fraiseql
+# 2.14.1 prints `fraiseql 2.14.1`, fraisier 1.0.0-beta.11 prints `fraisier 1.0.0-beta.11`,
+# and the retired Python fraisier still on some machines prints `fraisier, version 0.8.3`.
+
+[refusal]
+# What `fraise` exits with when this table is not satisfied, named as one of the classes
+# confiture's frozen contract defines (`exit_table.vendored.json`) so the umbrella has one
+# exit taxonomy rather than two. The loader refuses a class that contract does not list.
+class = "precondition_failed"
+why = """
+A tool that is absent, or at a version nothing vouches for, is a precondition of the \
+command that was not met — not an internal error and not invalid configuration. The \
+version guard refuses a dispatch with this same class, so a caller learns one exit for \
+"this machine is not ready" wherever it is discovered.\
+"""
+
+[tools.confiture]
+program = "confiture"
+versions = ">=1.19.0, <1.20.0"
+why = """
+`tools/confiture-requirements.txt` pins 1.19.0, and that is the release the vendored exit \
+table is diffed against, so accepting another one would measure the contract against a \
+version the document was not taken from. 1.20.0 is breaking — `tree_001` becomes \
+on-by-default at error, so a tree that built green starts failing at exit 5 — and \
+fraiseql's own pin of 1.19.0 is not on its `dev` branch yet: the stack moves as one or not \
+at all. Patches inside 1.19.x cannot change that contract, so the range allows them.\
+"""
+install = "uv tool install --force fraiseql-confiture==1.19.0"
+
+[tools.fraiseql]
+program = "fraiseql"
+versions = ">=2.14.1, <2.15.0"
+why = """
+2.14.1 is fraiseql's newest release; 2.15.0 is tagged but held behind its pre-release \
+backlog, and `dev` runs far ahead of both. The umbrella pins the release a person or an \
+agent can install today, so a `dev` build reads as outside the table and says so. The \
+migrate call shapes this face relies on are measured against `dev` and reach a release \
+with 2.15.0, which is when this row is bumped and not before.\
+"""
+install = "curl -fsSL https://github.com/fraiseql/fraiseql/releases/download/v2.14.1/fraiseql-x86_64-unknown-linux-gnu.tar.gz | tar xz -C ~/.local/bin"
+
+[tools.fraisier]
+program = "fraisier"
+versions = ">=1.0.0-beta.11, <2.0.0"
+why = """
+The deploy orchestrator `fraise` drives is the Rust fraisier of fraisier-core, whose newest \
+release is 1.0.0-beta.11. The floor matters more than the ceiling here: PyPI still serves \
+an unrelated Python `fraisier` at 0.8.x, which is what is on some machines, and a range \
+that starts at the beta reports it as outside the table instead of dispatching deploys to \
+it. The beta train and the 1.x line it becomes are both accepted.\
+"""
+install = "curl -fsSL https://github.com/fraiseql/fraisier-core/releases/download/fraisier-v1.0.0-beta.11/fraisier-x86_64-unknown-linux-gnu.tar.gz | tar xz -C ~/.local/bin"
+
+[tools.specql]
+program = "specql"
+awaiting_release = true
+why = """
+No release of the specql `fraise` drives exists to require: the repository is private, its \
+newest tag predates the tree this face was measured against, and nothing publishes a \
+binary. The `specql` package on PyPI is the retired v1 Python generator, not this tool, so \
+naming a range would point at the wrong thing. Absent, that is the expected state and \
+`doctor` passes; present, it is a build no release vouches for and `doctor` says so, \
+because the version guard refuses to dispatch to it.\
+"""

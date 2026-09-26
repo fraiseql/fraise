@@ -1,0 +1,135 @@
+name: release
+
+# One tarball, which is the first artefact of this repository that runs without it.
+#
+# It builds on a tag although publishing is off. release-plz keeps `publish = false` and
+# `git_release_enable = false` until the first alpha, so there is no `release: published` event
+# to hang this on — fraisier-core's trigger — and a workflow whose only trigger is an event
+# nothing emits is machinery nobody has ever run. So a tag builds and keeps the tarball as a
+# workflow artefact, and the upload to a release happens only when there is a release to upload
+# to. Switching publishing on needs no edit here.
+#
+# The archive is named for the crate's own version — `fraise-0.1.0-alpha.0-<target>.tar.gz` —
+# and not for a tag. There is no tag on a version crates.io will not see, the prerelease suffix
+# is part of what identifies the build, and a name taken from a tag would be a second source for
+# the version: `crates/fraise/tests/package.rs` takes it from `CARGO_PKG_VERSION` and then
+# requires the packaged binary to carry it.
+#
+# What this adds over the gate is the glibc floor and the upload. Everything asserted about the
+# artefact is asserted by the same test the gate runs on every push, pointed at this build
+# rather than at a debug one, so there is no second set of claims about a tarball.
+#
+# One target for now. The matrix fraisier-core carries — aarch64, musl, two macOS — is what the
+# first published alpha needs; today the tarball's readers are this workflow and whoever asks
+# for one, and five build paths nobody has downloaded from would be five untested ones.
+
+on:
+  push:
+    tags: ["v*"]
+  release:
+    types: [published]
+  # And on a pull request that changes what a tarball is. The zig install and the cross-build
+  # cost minutes where the gate costs seconds, so this is not on every push — but a release path
+  # measured only on a tag is one whose first measurement is the first release, and
+  # `workflow_dispatch` cannot stand in for that either: it only fires for a workflow that is
+  # already on the default branch. The paths are the ones that decide the artefact's identity and
+  # its glibc floor; a change under `crates/fraise/src/` is already packaged and asserted by the
+  # gate's own run of the same test.
+  pull_request:
+    paths:
+      - ".github/workflows/release.yml"
+      - "tools/package.sh"
+      - "crates/fraise/tests/package.rs"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - "rust-toolchain.toml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  CARGO_TERM_COLOR: always
+  # Stripped at link time, which is host-architecture-independent. The two tables are
+  # `include_str!`-compiled into the binary and the gate searches its bytes for them; stripping
+  # symbols leaves rodata alone, measured on a release build before this workflow existed.
+  CARGO_PROFILE_RELEASE_STRIP: symbols
+  TARGET: x86_64-unknown-linux-gnu
+  # The floor zig links against, and the ceiling the built binary is held to. Debian 12 is
+  # glibc 2.36: fraisier's beta.4 tarball was built on a GLIBC_2.38 host and would not load
+  # there, which is the failure this pair exists to make impossible rather than reported.
+  ZIG_TARGET: x86_64-unknown-linux-gnu.2.28
+  GLIBC_CEILING: "2.34"
+
+jobs:
+  tarball:
+    name: tarball
+    # Never on a fork: the upload step would have nothing to upload to.
+    if: github.repository == 'fraiseql/fraise'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      # For the one step that attaches the archive to a release, once there are releases.
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event_name == 'release' && github.event.release.tag_name || github.ref }}
+
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ env.TARGET }}
+
+      # zig as the linker is what pins the glibc floor; `cargo build` would floor the binary at
+      # whatever the runner happens to ship, which is the whole bug.
+      - name: Install zig and cargo-zigbuild
+        run: |
+          curl -fsSL https://ziglang.org/download/0.13.0/zig-linux-x86_64-0.13.0.tar.xz | tar -xJ
+          echo "$PWD/zig-linux-x86_64-0.13.0" >>"$GITHUB_PATH"
+          cargo install cargo-zigbuild --version 0.23.0 --locked
+
+      - name: Build fraise
+        run: cargo zigbuild --release --locked --target "$ZIG_TARGET" --bin fraise
+
+      - name: The binary loads where it says it does
+        run: |
+          binary="target/$TARGET/release/fraise"
+          needed=$(objdump -T "$binary" | grep -oE 'GLIBC_[0-9]+\.[0-9]+' |
+            sed 's/GLIBC_//' | sort -V | tail -1)
+          echo "fraise needs up to GLIBC_${needed:-none}"
+          if [ -n "$needed" ] &&
+            [ "$(printf '%s\n%s\n' "$GLIBC_CEILING" "$needed" | sort -V | tail -1)" != "$GLIBC_CEILING" ]; then
+            echo "::error::fraise requires GLIBC_$needed > $GLIBC_CEILING — it would not load on Debian 12"
+            exit 1
+          fi
+
+      # The gate's own test, pointed at this build and told where to leave the archive, so the
+      # file the next step uploads is the one these assertions passed on: the four members and
+      # nothing else, both tables found byte for byte inside the binary beside them, a one-byte
+      # drift of each **not** found, and the version in the name carried by the binary.
+      - name: Package and assert the tarball
+        env:
+          FRAISE_PACKAGE_BINARY: ${{ github.workspace }}/target/${{ env.TARGET }}/release/fraise
+          FRAISE_PACKAGE_TARGET: ${{ env.TARGET }}
+          FRAISE_PACKAGE_OUT: ${{ runner.temp }}/package
+        run: cargo test --test package
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: fraise-${{ env.TARGET }}
+          path: ${{ runner.temp }}/package/*.tar.gz
+          if-no-files-found: error
+
+      # Only when there is a release, which release-plz does not make while
+      # `git_release_enable = false`. This is the line that starts working on its own the day
+      # publishing is switched on.
+      - name: Attach it to the release
+        if: github.event_name == 'release'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release upload "${{ github.event.release.tag_name }}" "$RUNNER_TEMP"/package/*.tar.gz --clobber

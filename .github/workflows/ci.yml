@@ -1,0 +1,77 @@
+name: ci
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+    branches: [main]
+
+jobs:
+  rust:
+    name: rust
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+      - uses: taiki-e/install-action@nextest
+
+      # The exit-table test diffs `exit_table.vendored.json` against what confiture itself
+      # emits, and fails rather than skips when confiture is missing or is not the pinned
+      # release. The gate installs that release — exact and transitive, on confiture's own
+      # 3.11 floor — so the contract is measured against a named version rather than
+      # against whatever PyPI serves today. Without this step the freshness test could
+      # never have run, which is how fraisier-core's vendored table went stale in eight of
+      # nine entries with both its guards green (fraisier-core#63).
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+
+      # `confiture` goes on PATH, alone in its own directory so the venv's `python` does
+      # not shadow the runner's. `FRAISE_CONFITURE_BIN` would work too and stays honoured,
+      # but an ambient tool variable in a gate's environment is what reddened seven
+      # unrelated tests in fraisier-core (#64), so the gate does not set one.
+      - name: Install the pinned confiture
+        run: |
+          uv venv --python 3.11 "$RUNNER_TEMP/confiture"
+          uv pip install --python "$RUNNER_TEMP/confiture/bin/python" \
+            -r tools/confiture-requirements.txt
+          mkdir -p "$RUNNER_TEMP/confiture-bin"
+          ln -s "$RUNNER_TEMP/confiture/bin/confiture" "$RUNNER_TEMP/confiture-bin/confiture"
+          echo "$RUNNER_TEMP/confiture-bin" >>"$GITHUB_PATH"
+
+      - run: cargo xtask ci
+
+  # A compatibility table nothing runs is a preference, not a contract (D2). This job
+  # installs the releases the table names — reading them out of `fraise doctor --json`, so
+  # there is one reader of the table and the commands in it cannot rot — and then requires
+  # `doctor` to accept what it installed. A row that names an unreachable release, an install
+  # command that has bit-rotted, or a range that no longer matches what the release prints
+  # all fail the build here rather than on a user's machine.
+  doctor:
+    name: doctor
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+
+      - name: Install the releases the table names
+        run: |
+          cargo build --locked --bin fraise
+          mkdir -p "$HOME/.local/bin"
+          echo "$HOME/.local/bin" >>"$GITHUB_PATH"
+          # Exits non-zero precisely because nothing is installed yet, which is the report
+          # this step reads the install commands out of.
+          ./target/debug/fraise doctor --json >doctor-before.json || true
+          jq -r '.payload.tools[] | select(.install != null) | .install' doctor-before.json |
+            while read -r command; do
+              echo "$ $command"
+              sh -c "$command"
+            done
+
+      - name: The table is in force
+        run: |
+          ./target/debug/fraise doctor
+          ./target/debug/fraise doctor --json
