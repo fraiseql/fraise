@@ -6,3 +6,4 @@
 pub mod compatibility;
 pub mod doctor;
 pub mod exit_table;
+pub mod tool_version;

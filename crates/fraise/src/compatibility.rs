@@ -14,14 +14,20 @@
 //! The table names the class it refuses with, and this loader resolves that name against
 //! confiture's frozen contract in [`crate::exit_table`]: one exit taxonomy for the whole
 //! umbrella, and a refusal class the contract does not define cannot load.
+//!
+//! The judgement lives here too. [`Tool::judge`] turns what
+//! [`crate::tool_version::read`] measured into a [`Verdict`], so `doctor` and the guard
+//! reach the same verdict by calling the same method rather than by two matches that agree
+//! today.
 
 use std::collections::BTreeMap;
 use std::sync::OnceLock;
 
 use semver::{Version, VersionReq};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 use crate::exit_table::{ExitClass, ExitTable};
+use crate::tool_version::Reading;
 
 /// The table, compiled into the binary so a released `fraise` carries the table its tests
 /// and its CI job measured.
@@ -196,6 +202,62 @@ impl Tool {
             .as_ref()
             .is_some_and(|allowed| allowed.requirement.matches(version))
     }
+
+    /// What this row says about what was measured on the machine.
+    ///
+    /// The one place a reading becomes a verdict. `doctor` prints the verdict and the guard
+    /// refuses on it, so neither holds a rule of its own about what an absent tool or an
+    /// unreadable version means.
+    #[must_use]
+    pub fn judge(&self, reading: &Reading) -> Verdict {
+        match (self.pins_a_release(), reading) {
+            (true, Reading::Version(version)) => {
+                if self.accepts(version) {
+                    Verdict::Ok
+                } else {
+                    Verdict::OutsideTable
+                }
+            },
+            (false, Reading::Version(_)) => Verdict::Unvouched,
+            (true, Reading::Missing) => Verdict::Missing,
+            (false, Reading::Missing) => Verdict::AwaitingRelease,
+            (_, Reading::Unreadable(_)) => Verdict::Unreadable,
+        }
+    }
+}
+
+/// What the table says about one tool as it is installed here.
+///
+/// Two of these satisfy the table and four do not, which [`Verdict::satisfied`] answers. The
+/// four are kept apart because a reader acts differently on each — install it, downgrade it,
+/// look at what it printed, or stop dispatching to a build nothing released — and collapsing
+/// them into "not ok" is the report failing at its one job.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Verdict {
+    /// Installed, and at a version the table allows.
+    Ok,
+    /// Installed, and at a version the table does not allow.
+    OutsideTable,
+    /// Not on `PATH` at all, while the table names a release to install.
+    Missing,
+    /// It answered, but nothing a version could be read from. Neither a version outside the
+    /// table nor a missing tool: reading it as either would be a reading nobody measured.
+    Unreadable,
+    /// No release of it exists to require, and none is installed — the expected state for a
+    /// tool the stack has not released yet.
+    AwaitingRelease,
+    /// No release of it exists to require, and a build is installed anyway. Nothing vouches
+    /// for that version, so the guard refuses to dispatch to it.
+    Unvouched,
+}
+
+impl Verdict {
+    /// Whether this verdict satisfies the table.
+    #[must_use]
+    pub const fn satisfied(self) -> bool {
+        matches!(self, Self::Ok | Self::AwaitingRelease)
+    }
 }
 
 /// The versions of a tool that exist and are allowed, with the command that gets one.
@@ -245,8 +307,9 @@ struct Row {
 mod tests {
     use semver::Version;
 
-    use super::{CompatibilityTable, DOCUMENT};
+    use super::{CompatibilityTable, DOCUMENT, Verdict};
     use crate::exit_table::ExitTable;
+    use crate::tool_version::Reading;
 
     fn parse(source: &str) -> Result<CompatibilityTable, String> {
         CompatibilityTable::parse(source, ExitTable::vendored())
@@ -337,6 +400,35 @@ mod tests {
         assert_eq!(specql.allowed(), None);
         assert_eq!(specql.install(), None);
         assert!(!specql.accepts(&Version::parse("2.0.0").expect("a version")));
+    }
+
+    #[test]
+    fn a_reading_becomes_a_verdict_in_one_place_for_every_caller() {
+        // `doctor` reports these and the guard refuses on them, so the four unsatisfied
+        // states are asserted here rather than in either caller.
+        let table = CompatibilityTable::vendored();
+        let fraiseql = table.tool("fraiseql").expect("the table names fraiseql");
+        let specql = table.tool("specql").expect("the table names specql");
+        let version = |text: &str| Reading::Version(Version::parse(text).expect("a version"));
+
+        assert_eq!(fraiseql.judge(&version("2.14.1")), Verdict::Ok);
+        assert_eq!(fraiseql.judge(&version("2.13.0")), Verdict::OutsideTable);
+        assert_eq!(fraiseql.judge(&Reading::Missing), Verdict::Missing);
+        assert_eq!(
+            fraiseql.judge(&Reading::Unreadable("said nothing".to_owned())),
+            Verdict::Unreadable
+        );
+        assert_eq!(specql.judge(&Reading::Missing), Verdict::AwaitingRelease);
+        assert_eq!(specql.judge(&version("2.0.0")), Verdict::Unvouched);
+
+        let unsatisfied = [
+            Verdict::OutsideTable,
+            Verdict::Missing,
+            Verdict::Unreadable,
+            Verdict::Unvouched,
+        ];
+        assert!(!unsatisfied.iter().any(|verdict| verdict.satisfied()));
+        assert!(Verdict::Ok.satisfied() && Verdict::AwaitingRelease.satisfied());
     }
 
     #[test]

@@ -1,74 +1,26 @@
 //! `fraise doctor`: the compatibility table, measured against this machine.
 //!
-//! The table says which release of each tool the umbrella may talk to; `doctor` executes
-//! each tool's `--version`, reads what it printed, and reports the two side by side. That is
-//! all it does — the measurement is the product, so every verdict here is a fact the report
-//! can name rather than a guess it had to make.
+//! The table says which release of each tool the umbrella may talk to; `doctor` reads each
+//! tool's version with [`crate::tool_version`], asks the tool's own row what that means with
+//! [`Tool::judge`], and reports the two side by side. It owns no rule of its own about what a
+//! reading means — the guard on every tool boundary will ask the same row the same question,
+//! and a report that disagreed with the guard would be worse than no report.
 //!
-//! The report is deliberately quotable: every finding carries the range that was allowed,
-//! the row's reason and, when there is one, the command that installs an allowed release, so
-//! a reader can act on it without opening this repository. `--json` emits the same findings
-//! for a machine; Cycle 5's envelope will carry that document as its payload.
+//! What it does own is making the answer actionable: every finding carries the range that was
+//! allowed, the row's reason and, when there is one, the command that installs an allowed
+//! release, so a reader can act without opening this repository. `--json` emits the same
+//! findings for a machine; Cycle 5's envelope will carry that document as its payload.
 //!
 //! The exit is the contract. A machine that does not satisfy the table exits with the class
-//! the table names — the same class Cycle 4's guard refuses a dispatch with — and CI runs
-//! `doctor` against the releases the table names, so the table is in force rather than
-//! merely configured.
+//! the table names, and CI installs the releases the table names — by reading the table — and
+//! requires `doctor` to accept them, so the table is in force rather than merely configured.
 
 use std::fmt::Write as _;
-use std::io::ErrorKind;
-use std::process::Command;
 
-use semver::Version;
 use serde::Serialize;
 
-use crate::compatibility::{CompatibilityTable, Tool};
-
-/// What measuring one tool came to.
-///
-/// Two of these are satisfied states and four are not, which [`Verdict::satisfied`] answers;
-/// the distinctions between the four exist because a reader acts differently on each, and
-/// collapsing them into "not ok" is what a report must not do.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
-#[serde(rename_all = "snake_case")]
-pub enum Verdict {
-    /// Installed, and at a version the table allows.
-    Ok,
-    /// Installed, and at a version the table does not allow.
-    OutsideTable,
-    /// Not on `PATH` at all, while the table names a release to install.
-    Missing,
-    /// It answered, but nothing a version could be read from. Neither a version outside the
-    /// table nor a missing tool: reading it as either would be a reading nobody measured.
-    Unreadable,
-    /// No release of it exists to require, and none is installed — the expected state for a
-    /// tool the stack has not released yet.
-    AwaitingRelease,
-    /// No release of it exists to require, and a build is installed anyway. Nothing vouches
-    /// for that version, so the guard will refuse to dispatch to it.
-    Unvouched,
-}
-
-impl Verdict {
-    /// Whether this verdict satisfies the table.
-    #[must_use]
-    pub const fn satisfied(self) -> bool {
-        matches!(self, Self::Ok | Self::AwaitingRelease)
-    }
-
-    /// The verdict as a human report spells it.
-    #[must_use]
-    pub const fn label(self) -> &'static str {
-        match self {
-            Self::Ok => "ok",
-            Self::OutsideTable => "outside the table",
-            Self::Missing => "missing",
-            Self::Unreadable => "unreadable",
-            Self::AwaitingRelease => "awaiting a release",
-            Self::Unvouched => "unvouched",
-        }
-    }
-}
+use crate::compatibility::{CompatibilityTable, Tool, Verdict};
+use crate::tool_version;
 
 /// One tool's row and what measuring it came to, which is the whole of what `doctor` has to
 /// say about that tool.
@@ -96,9 +48,7 @@ impl Finding<'_> {
         let allowed = self.allowed.unwrap_or("no release to require");
         match self.verdict {
             Verdict::Ok => format!("{} — allowed {allowed}", self.found_or("a version")),
-            Verdict::OutsideTable => {
-                format!("{} — outside {allowed}", self.found_or("a version"))
-            },
+            Verdict::OutsideTable => format!("{} — outside {allowed}", self.found_or("a version")),
             Verdict::Missing => format!("not on PATH — allowed {allowed}"),
             Verdict::Unreadable => self
                 .problem
@@ -151,8 +101,8 @@ impl Report<'_> {
     ///
     /// # Panics
     ///
-    /// If the findings cannot be serialised, which is a bug in this module rather than a
-    /// state a machine can be in.
+    /// If the findings cannot be serialised, which is a bug in this module rather than a state
+    /// a machine can be in.
     #[must_use]
     pub fn to_json(&self) -> String {
         let mut json = serde_json::to_string_pretty(self).expect("a finding serialises");
@@ -164,24 +114,28 @@ impl Report<'_> {
     /// satisfy the table, the row's reason and the command that fixes it.
     #[must_use]
     pub fn render(&self) -> String {
-        let width = self.tools.iter().map(|finding| finding.tool.len()).max().unwrap_or_default();
-        let labels = self
+        let tools = self.tools.iter().map(|finding| finding.tool.len()).max().unwrap_or_default();
+        let verdicts = self
             .tools
             .iter()
-            .map(|finding| finding.verdict.label().len())
+            .map(|finding| label(finding.verdict).len())
             .max()
             .unwrap_or_default();
 
         let mut text = String::new();
         for finding in &self.tools {
-            let label = finding.verdict.label();
-            let _ =
-                writeln!(text, "{:width$}  {label:labels$}  {}", finding.tool, finding.reading());
+            let verdict = label(finding.verdict);
+            let _ = writeln!(
+                text,
+                "{:tools$}  {verdict:verdicts$}  {}",
+                finding.tool,
+                finding.reading()
+            );
             if finding.verdict.satisfied() {
                 continue;
             }
-            // The reason is prose and is wrapped; an install command is not, because a
-            // command broken across lines is one nobody can paste.
+            // The reason is prose and is wrapped; an install command is not, because a command
+            // broken across lines is one nobody can paste.
             text.push_str(&wrapped(finding.why, "      why: ", "           "));
             if let Some(install) = finding.install {
                 let _ = writeln!(text, "      install: {install}");
@@ -209,36 +163,18 @@ impl Report<'_> {
 /// Measure every tool the table speaks for.
 #[must_use]
 pub fn examine(table: &CompatibilityTable) -> Report<'_> {
-    let tools = table.tools().map(|tool| measure(tool, probe(tool.program()))).collect();
+    let tools = table.tools().map(measure).collect();
     Report { table, tools }
 }
 
-/// What executing `<program> --version` came to.
-#[derive(Debug)]
-enum Probe {
-    /// A version was read from the first line it printed.
-    Version(Version),
-    /// It is not on `PATH`.
-    Missing,
-    /// It answered, but with nothing a version could be read from.
-    Unreadable(String),
-}
-
-/// One row, plus that row's measurement, read as a verdict.
-fn measure(tool: &Tool, probe: Probe) -> Finding<'_> {
-    let (verdict, found, problem) = match (tool.pins_a_release(), probe) {
-        (true, Probe::Version(version)) => {
-            let verdict = if tool.accepts(&version) {
-                Verdict::Ok
-            } else {
-                Verdict::OutsideTable
-            };
-            (verdict, Some(version.to_string()), None)
-        },
-        (false, Probe::Version(version)) => (Verdict::Unvouched, Some(version.to_string()), None),
-        (true, Probe::Missing) => (Verdict::Missing, None, None),
-        (false, Probe::Missing) => (Verdict::AwaitingRelease, None, None),
-        (_, Probe::Unreadable(problem)) => (Verdict::Unreadable, None, Some(problem)),
+/// One row, measured on this machine and judged by that row.
+fn measure(tool: &Tool) -> Finding<'_> {
+    let reading = tool_version::read(tool.program());
+    let verdict = tool.judge(&reading);
+    let (found, problem) = match reading {
+        tool_version::Reading::Version(version) => (Some(version.to_string()), None),
+        tool_version::Reading::Missing => (None, None),
+        tool_version::Reading::Unreadable(problem) => (None, Some(problem)),
     };
     Finding {
         tool: tool.name(),
@@ -252,44 +188,17 @@ fn measure(tool: &Tool, probe: Probe) -> Finding<'_> {
     }
 }
 
-/// Execute `<program> --version` and read the version out of what it printed.
-///
-/// The umbrella never guesses a version from an exit or from silence: a program that cannot
-/// say which release it is gets [`Probe::Unreadable`], and the report says what it printed
-/// instead.
-fn probe(program: &str) -> Probe {
-    let output = match Command::new(program).arg("--version").output() {
-        Ok(output) => output,
-        Err(error) if error.kind() == ErrorKind::NotFound => return Probe::Missing,
-        Err(error) => {
-            return Probe::Unreadable(format!("`{program} --version` could not be run: {error}"));
-        },
-    };
-    if !output.status.success() {
-        return Probe::Unreadable(format!(
-            "`{program} --version` exited {:?}",
-            output.status.code()
-        ));
+/// The verdict as a human report spells it. Presentation, which is why it lives here and the
+/// verdict itself lives with the table.
+const fn label(verdict: Verdict) -> &'static str {
+    match verdict {
+        Verdict::Ok => "ok",
+        Verdict::OutsideTable => "outside the table",
+        Verdict::Missing => "missing",
+        Verdict::Unreadable => "unreadable",
+        Verdict::AwaitingRelease => "awaiting a release",
+        Verdict::Unvouched => "unvouched",
     }
-    let printed = String::from_utf8_lossy(&output.stdout);
-    let line = printed.lines().next().unwrap_or_default().trim();
-    read_version(line).map_or_else(
-        || Probe::Unreadable(format!("`{program} --version` printed {line:?}, naming no version")),
-        Probe::Version,
-    )
-}
-
-/// The version in a tool's `--version` line.
-///
-/// Three spellings are in use across the four tools — `fraiseql 2.14.1`,
-/// `confiture version 1.19.0`, `fraisier, version 0.8.3` — so the rule is the first token
-/// of the first line that parses as a version, rather than a pattern per tool. Only the
-/// first line is read: confiture's later lines report the parser build and the native
-/// extension, which are the machine's rather than the release's.
-fn read_version(line: &str) -> Option<Version> {
-    line.split_whitespace().find_map(|token| {
-        Version::parse(token.trim_start_matches('v').trim_end_matches([',', ';'])).ok()
-    })
 }
 
 /// `text` as wrapped lines, the first prefixed with `first` and the rest with `rest`.
@@ -298,15 +207,15 @@ fn wrapped(text: &str, first: &str, rest: &str) -> String {
 
     let mut lines = String::new();
     let mut line = String::from(first);
-    let mut prefix_len = first.len();
+    let mut prefix = first.len();
     for word in text.split_whitespace() {
-        if line.len() > prefix_len && line.len() + 1 + word.len() > WIDTH {
+        if line.len() > prefix && line.len() + 1 + word.len() > WIDTH {
             lines.push_str(&line);
             lines.push('\n');
             line = String::from(rest);
-            prefix_len = rest.len();
+            prefix = rest.len();
         }
-        if line.len() > prefix_len {
+        if line.len() > prefix {
             line.push(' ');
         }
         line.push_str(word);
@@ -318,33 +227,14 @@ fn wrapped(text: &str, first: &str, rest: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{Verdict, read_version};
+    use super::{examine, label};
+    use crate::compatibility::{CompatibilityTable, Verdict};
 
     #[test]
-    fn the_spellings_the_four_tools_actually_use_are_all_read() {
-        // Measured on 2026-09-26 by running each binary, which is why there are three
-        // shapes and not one: a per-tool pattern would be a fourth thing to keep current.
-        for (printed, version) in [
-            ("fraiseql 2.14.1", "2.14.1"),
-            ("confiture version 1.19.0", "1.19.0"),
-            ("fraisier 1.0.0-beta.11", "1.0.0-beta.11"),
-            ("fraisier, version 0.8.3", "0.8.3"),
-            ("specql v2.0.0", "2.0.0"),
-        ] {
-            let read = read_version(printed).map(|version| version.to_string());
-            assert_eq!(read.as_deref(), Some(version), "reading {printed:?}");
-        }
-    }
-
-    #[test]
-    fn a_line_that_names_no_version_is_not_guessed_at() {
-        assert_eq!(read_version("a wrapper script that forgot to say which fraisier"), None);
-        assert_eq!(read_version(""), None);
-    }
-
-    #[test]
-    fn only_two_verdicts_satisfy_the_table() {
-        let satisfied: Vec<&str> = [
+    fn every_verdict_a_report_can_carry_has_a_word_for_it() {
+        // `label` is exhaustive by the compiler; what this asserts is that none of the words
+        // is empty or shared, since the human report distinguishes findings by them alone.
+        let words: Vec<&str> = [
             Verdict::Ok,
             Verdict::OutsideTable,
             Verdict::Missing,
@@ -353,9 +243,29 @@ mod tests {
             Verdict::Unvouched,
         ]
         .into_iter()
-        .filter(|verdict| verdict.satisfied())
-        .map(Verdict::label)
+        .map(label)
         .collect();
-        assert_eq!(satisfied, ["ok", "awaiting a release"]);
+        assert!(words.iter().all(|word| !word.is_empty()));
+        let mut unique = words.clone();
+        unique.sort_unstable();
+        unique.dedup();
+        assert_eq!(unique.len(), words.len(), "two verdicts read the same: {words:?}");
+    }
+
+    #[test]
+    fn a_report_speaks_for_every_row_of_the_table() {
+        // Whatever is installed on the machine running this, the report is not allowed to be
+        // shorter than the table: a tool that went unmeasured would read as a clean bill.
+        let table = CompatibilityTable::vendored();
+        let report = examine(table);
+        let json = report.to_json();
+        for tool in table.tools() {
+            assert!(
+                json.contains(tool.name()),
+                "{} is missing from the report: {json}",
+                tool.name()
+            );
+        }
+        assert_eq!(report.satisfied(), report.exit() == 0);
     }
 }
