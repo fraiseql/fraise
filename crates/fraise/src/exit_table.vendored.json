@@ -1,1 +1,235 @@
-{}
+{
+  "classes": [
+    "ok",
+    "internal_error",
+    "precondition_failed",
+    "db_unreachable",
+    "schema_error",
+    "invalid_config",
+    "lock_contention",
+    "git_error",
+    "irreversible_rollback"
+  ],
+  "exit_codes": {
+    "0": {
+      "class": "ok",
+      "meaning": "Success (including success-with-signal: already applied, nothing pending, advisories)",
+      "symbolic_codes": [
+        "DIFFER_402",
+        "MIGR_101",
+        "SCHEMA_206",
+        "SEED_002",
+        "SEED_003"
+      ]
+    },
+    "1": {
+      "class": "internal_error",
+      "meaning": "Generic failure (SQL/hook execution, status: pending)",
+      "symbolic_codes": [
+        "SQL_001"
+      ]
+    },
+    "2": {
+      "class": "precondition_failed",
+      "meaning": "Tracking table absent \u2014 confiture not initialized on this database yet",
+      "symbolic_codes": [
+        "PRECON_1001"
+      ]
+    },
+    "3": {
+      "class": "db_unreachable",
+      "meaning": "Database connection failed \u2014 host/auth/network unreachable",
+      "symbolic_codes": [
+        "CONFIG_006",
+        "GEN_001",
+        "MIGR_001",
+        "MIGR_004",
+        "MIGR_100",
+        "MIGR_102",
+        "MIGR_106",
+        "MIGR_107",
+        "MIGR_108"
+      ]
+    },
+    "4": {
+      "class": "schema_error",
+      "meaning": "Schema / DDL / build error",
+      "symbolic_codes": [
+        "DDL_001",
+        "REBUILD_001",
+        "SCHEMA_001",
+        "SCHEMA_201",
+        "SCHEMA_202",
+        "SCHEMA_205"
+      ]
+    },
+    "5": {
+      "class": "invalid_config",
+      "meaning": "Configuration invalid, or validation / sync / lint / precondition failure",
+      "symbolic_codes": [
+        "ANON_1400",
+        "CONFIG_001",
+        "CONFIG_002",
+        "CONFIG_003",
+        "CONFIG_004",
+        "CONFIG_007",
+        "CONFIG_008",
+        "CONFIG_009",
+        "CONFIG_010",
+        "CONFIG_011",
+        "CONFIG_012",
+        "CONFIG_013",
+        "DIFFER_400",
+        "DIFFER_401",
+        "DIFF_001",
+        "PRECON_1000",
+        "RESTORE_001",
+        "SEED_001",
+        "SYNC_001",
+        "VALID_001",
+        "VALID_002",
+        "VERIFY_001"
+      ]
+    },
+    "6": {
+      "class": "lock_contention",
+      "meaning": "Lock contention \u2014 another writer holds the lock",
+      "symbolic_codes": [
+        "LOCK_1300"
+      ]
+    },
+    "7": {
+      "class": "git_error",
+      "meaning": "Git / pgGit / grant-accompaniment error",
+      "symbolic_codes": [
+        "GIT_001",
+        "GIT_002",
+        "GIT_003",
+        "GRANT_001",
+        "PGGIT_900"
+      ]
+    },
+    "8": {
+      "class": "irreversible_rollback",
+      "meaning": "Irreversible rollback, or inconsistent state after rollback",
+      "symbolic_codes": [
+        "ROLLBACK_001",
+        "ROLLBACK_600"
+      ]
+    }
+  },
+  "no_ledger_error_code": "PRECON_1001",
+  "mappings": {
+    "note": "The face's own section, added to confiture's document rather than kept beside it: a match statement drifts in silence and a document is diffed (one-face D7). Each row says what one tool's raw process exit means in the classes above. Resolution is: the row matching (tool_exit, error_class) exactly, else the exit's error_class: null row, else the tool's `unlisted` class. Every `class` here must be one the `classes` list above names, which is what keeps this one table rather than two. Confiture is deliberately absent: the `exit_codes` map above is already its own table, so reading a confiture exit is a lookup there, not a mapping. No tool reports its error class at the process boundary today, so only the error_class: null rows are reachable until one does; the refined rows are the tool's own taxonomy, named so that adding the report is a change to the tool and not to this document.",
+    "tools": {
+      "fraiseql": {
+        "source": "fraiseql crates/fraiseql-cli: output/mod.rs get_exit_codes(), enforced by runner.rs enforce_exit_code() \u2014 read 2026-09-26",
+        "note": "fraiseql documents three exits and no more. Its table is not changed by the face (D7): CI users depend on it, so it is documented as the tool's.",
+        "rows": [
+          {
+            "tool_exit": 0,
+            "error_class": null,
+            "class": "ok",
+            "why": "fraiseql's `success`."
+          },
+          {
+            "tool_exit": 1,
+            "error_class": null,
+            "class": "internal_error",
+            "why": "fraiseql's `error`: an operational failure it could not classify, which is what confiture's exit 1 is as well."
+          },
+          {
+            "tool_exit": 2,
+            "error_class": null,
+            "class": "invalid_config",
+            "why": "fraiseql's `validation_failed`: the command ran and the checked artifact failed its gate \u2014 a lint quality gate, a federation composition error. Confiture's class 5 is where a validation failure goes, its own meaning naming it (D7: fraiseql 2 \u2192 5)."
+          }
+        ],
+        "unlisted": {
+          "class": "internal_error",
+          "why": "fraiseql documents 0, 1 and 2; any other exit is a process that did not follow its own contract."
+        }
+      },
+      "specql": {
+        "source": "specql crates/specql-cli/src/main.rs (`async fn main() -> Result<()>`) and crates/specql-core/src/error.rs \u2014 read 2026-09-26 on feat/platform-project-provisioning",
+        "note": "specql's main returns anyhow::Result, so every failure is exit 1 and the variant name is lost at the process boundary: there is no --json envelope and no error code on stderr, so only the unrefined row is reachable today. The refined rows name specql-core's own Error variants, the taxonomy it would report. Six of its ten declared variants are constructed anywhere in the tree (Parse, TomlParseError, ValidationError, TypeError, ConstraintError, ReferenceError) and those six are mapped here; Database, Configuration, Generation and CircularDependencyError are constructed nowhere. Database is the one to settle before it is: a database that cannot be reached is confiture's class 3, which D7's \"4 or 5 by error class\" does not cover, so it is left unmapped rather than filed wrongly under the default.",
+        "rows": [
+          {
+            "tool_exit": 0,
+            "error_class": null,
+            "class": "ok",
+            "why": "specql returned Ok(())."
+          },
+          {
+            "tool_exit": 1,
+            "error_class": null,
+            "class": "invalid_config",
+            "why": "Every specql failure is exit 1. Unrefined, the honest reading is that the spec it was compiling is the thing to look at, which is class 5 \u2014 D7 maps specql's 1 onto 4 or 5, and 5 is the wider half."
+          },
+          {
+            "tool_exit": 1,
+            "error_class": "TypeError",
+            "class": "schema_error",
+            "why": "A field type the described schema cannot carry."
+          },
+          {
+            "tool_exit": 1,
+            "error_class": "ConstraintError",
+            "class": "schema_error",
+            "why": "A constraint the described schema cannot hold."
+          },
+          {
+            "tool_exit": 1,
+            "error_class": "ReferenceError",
+            "class": "schema_error",
+            "why": "A reference between entities that does not resolve."
+          },
+          {
+            "tool_exit": 1,
+            "error_class": "Parse",
+            "class": "invalid_config",
+            "why": "The spec did not parse: the input is malformed, not the schema."
+          },
+          {
+            "tool_exit": 1,
+            "error_class": "TomlParseError",
+            "class": "invalid_config",
+            "why": "The spec file is not TOML the parser accepts."
+          },
+          {
+            "tool_exit": 1,
+            "error_class": "ValidationError",
+            "class": "invalid_config",
+            "why": "The spec parsed and broke a rule \u2014 naming, buckets, actions, security directives. Confiture's class 5 names validation itself."
+          }
+        ],
+        "unlisted": {
+          "class": "internal_error",
+          "why": "specql has no exit but 0 and 1; any other is a crash or a signal, not a verdict about the spec."
+        }
+      },
+      "fraisier": {
+        "source": "fraisier-core crates/fraisier-cli/src/main.rs (ExitCode::from (output.exit_code)), commands.rs and doctor.rs \u2014 read 2026-09-26",
+        "note": "fraisier's CommandOutput carries an exit code per command, and its 2 is not a class: doctor exits 2 for warnings and no failures, which is a success with a signal, while env-check exits 2 for a config it could not read or a subcommand it does not know. A table keyed on the exit integer alone cannot map a number whose meaning belongs to the command, so 2 is recorded here and left to `unlisted` rather than mapped wrongly. D7 settles 1 \u2192 1.",
+        "rows": [
+          {
+            "tool_exit": 0,
+            "error_class": null,
+            "class": "ok",
+            "why": "The command reported no failure."
+          },
+          {
+            "tool_exit": 1,
+            "error_class": null,
+            "class": "internal_error",
+            "why": "fraisier's failed command, and the exit its own confiture adapter reads as internal_error (D7: fraisier 1 \u2192 1)."
+          }
+        ],
+        "unlisted": {
+          "class": "internal_error",
+          "why": "Including 2, whose meaning is the command's rather than the tool's \u2014 see this entry's note."
+        }
+      }
+    }
+  }
+}
