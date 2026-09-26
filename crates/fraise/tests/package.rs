@@ -18,10 +18,13 @@
 //! may not be able to run, and an assertion that only holds for a native build is an assertion
 //! the tarballs that matter never get.
 //!
-//! CI substitutes two things: the binary to package — `FRAISE_PACKAGE_BINARY`, the release
-//! build rather than this test's debug one — and where to leave the archive,
-//! `FRAISE_PACKAGE_OUT`, so that the job uploads the very file these assertions passed on
-//! rather than a second one built beside it.
+//! CI substitutes three things: the binary to package (`FRAISE_PACKAGE_BINARY`, the release
+//! build rather than this test's debug one), the target it was built for
+//! (`FRAISE_PACKAGE_TARGET`, since a cross-built binary is not the host's), and where to leave
+//! the archive (`FRAISE_PACKAGE_OUT`, so that the job uploads the very file these assertions
+//! passed on rather than a second one built beside it). The version is not among them: it comes
+//! from `CARGO_PKG_VERSION`, which is the one the binary itself carries, and the assertions
+//! below are what hold the name to it.
 
 #![cfg(unix)]
 
@@ -59,12 +62,16 @@ fn out_directory() -> PathBuf {
     path
 }
 
-/// The target triple the binary being packaged was built for, as the toolchain names it.
+/// The target triple the binary being packaged was built for.
 ///
-/// Read from `rustc` rather than assembled from what this process knows about the machine,
-/// because it ends up in the artefact's name and the release workflow gets it from the
-/// toolchain too.
-fn host_target() -> String {
+/// The release workflow says which, because it cross-builds and the answer is not this
+/// machine's. Otherwise it is the host as `rustc` names it, read from the toolchain rather than
+/// assembled from what this process knows about the machine, since it ends up in the artefact's
+/// name.
+fn target_of_binary() -> String {
+    if let Some(target) = env::var_os("FRAISE_PACKAGE_TARGET") {
+        return target.into_string().expect("the target triple is utf-8");
+    }
     let output = Command::new("rustc").arg("-vV").output().expect("rustc runs");
     let report = String::from_utf8(output.stdout).expect("rustc's report is utf-8");
     report
@@ -91,7 +98,7 @@ fn drifted(document: &[u8]) -> Vec<u8> {
 fn the_tarball_holds_the_binary_the_two_tables_and_the_licence() {
     let out = out_directory();
     let binary = binary_to_package();
-    let target = host_target();
+    let target = target_of_binary();
     let version = env!("CARGO_PKG_VERSION");
 
     let packaged = Command::new(script())
