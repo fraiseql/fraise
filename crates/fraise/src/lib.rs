@@ -9,3 +9,8 @@ pub mod doctor;
 pub mod envelope;
 pub mod exit_table;
 pub mod tool_version;
+
+// Reason: the source of this crate, read by the two tests whose claim is about the shape of
+// the tree rather than about a value. It ships nothing.
+#[cfg(test)]
+mod source;

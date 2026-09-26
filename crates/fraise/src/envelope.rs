@@ -195,6 +195,24 @@ const fn succeeded(exit: i32) -> bool {
 #[cfg(test)]
 mod tests {
     use super::{Asked, Payload, PayloadKind};
+    use crate::source;
+
+    #[test]
+    fn the_envelope_is_the_only_thing_that_writes_json() {
+        // One envelope per command is a promise about output, so it is kept where output is
+        // made: exactly one place in the crate turns a value into JSON text, and it is the one
+        // that wraps it. A module that serialised its own report straight to standard output
+        // would be a second shape for a caller to learn, and would fail here first.
+        source::is_confined_to(
+            &[
+                source::spelled(&["serde_json", "to_string"]),
+                source::spelled(&["serde_json", "to_writer"]),
+            ],
+            &[("envelope.rs", 1)],
+            "writes JSON",
+            "one document per command means one place that writes one, which is this module",
+        );
+    }
 
     #[test]
     fn bytes_that_parse_are_still_text_when_nobody_asked_for_json() {
