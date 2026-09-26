@@ -255,10 +255,8 @@ struct ExitEntry {
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Mappings {
-    #[allow(
-        dead_code,
-        reason = "read by a person reading the document, not by the loader"
-    )]
+    // Reason: read by a person reading the document, not by the loader.
+    #[allow(dead_code)]
     note: String,
     tools: BTreeMap<String, ToolMapping>,
 }
@@ -267,12 +265,11 @@ struct Mappings {
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct ToolMapping {
-    #[allow(dead_code, reason = "where the tool's own exits were read, and when")]
+    // Reason: where the tool's own exits were read, and when.
+    #[allow(dead_code)]
     source: String,
-    #[allow(
-        dead_code,
-        reason = "what was measured, including what is deliberately unmapped"
-    )]
+    // Reason: what was measured, including what is deliberately unmapped.
+    #[allow(dead_code)]
     note: String,
     rows: Vec<Row>,
     unlisted: Unlisted,
@@ -287,10 +284,8 @@ struct Row {
     /// exit. No tool reports one at the process boundary yet.
     error_class: Option<String>,
     class: String,
-    #[allow(
-        dead_code,
-        reason = "the reason the row reads that way; required, so it is given"
-    )]
+    // Reason: the reason the row reads that way; required, so it is given.
+    #[allow(dead_code)]
     why: String,
 }
 
@@ -299,7 +294,8 @@ struct Row {
 #[serde(deny_unknown_fields)]
 struct Unlisted {
     class: String,
-    #[allow(dead_code, reason = "the reason the fallback is that class; required")]
+    // Reason: the reason the fallback is that class; required.
+    #[allow(dead_code)]
     why: String,
 }
 

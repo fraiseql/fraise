@@ -17,4 +17,27 @@ jobs:
           components: rustfmt, clippy
       - uses: Swatinem/rust-cache@v2
       - uses: taiki-e/install-action@nextest
+
+      # The exit-table test diffs `exit_table.vendored.json` against what confiture itself
+      # emits, and fails rather than skips when confiture is missing or is not the pinned
+      # release. The gate installs that release — exact and transitive, on confiture's own
+      # 3.11 floor — so the contract is measured against a named version rather than
+      # against whatever PyPI serves today. Without this step the freshness test could
+      # never have run, which is how fraisier-core's vendored table went stale in eight of
+      # nine entries with both its guards green (fraisier-core#63).
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+
+      # `confiture` goes on PATH, alone in its own directory so the venv's `python` does
+      # not shadow the runner's. `FRAISE_CONFITURE_BIN` would work too and stays honoured,
+      # but an ambient tool variable in a gate's environment is what reddened seven
+      # unrelated tests in fraisier-core (#64), so the gate does not set one.
+      - name: Install the pinned confiture
+        run: |
+          uv venv --python 3.11 "$RUNNER_TEMP/confiture"
+          uv pip install --python "$RUNNER_TEMP/confiture/bin/python" \
+            -r tools/confiture-requirements.txt
+          mkdir -p "$RUNNER_TEMP/confiture-bin"
+          ln -s "$RUNNER_TEMP/confiture/bin/confiture" "$RUNNER_TEMP/confiture-bin/confiture"
+          echo "$RUNNER_TEMP/confiture-bin" >>"$GITHUB_PATH"
+
       - run: cargo xtask ci
