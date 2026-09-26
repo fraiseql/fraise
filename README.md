@@ -10,13 +10,13 @@ exit table instead of four of each.
 
 ## Status
 
-Alpha, and honest about it: `fraise --version`, the exit table and `fraise doctor`
-are what exist today. Nothing dispatches yet, no verbs are implemented, and the
-crate is not published. What is being built, in order:
+Alpha, and honest about it: `fraise --version`, the exit table, `fraise doctor`
+and the version-guarded `fraise tool` are what exist today. None of the named
+verbs are implemented and the crate is not published. What is being built, in
+order:
 
 | | |
 |---|---|
-| the version guard | every invocation that crosses a tool boundary checks the version first and refuses a skew it has not been told to tolerate |
 | `fraise.toml` | the one file a project author writes; `fraise config sync` renders confiture's YAMLs from it, and `--check` fails on drift |
 | `--json` | one envelope for every command: the tool's raw exit beside the mapped one, and a field saying whether the payload is the tool's JSON or its text |
 | the verbs | `init check build migrate deploy status up`, each documented as the exact tool invocation it performs, so falling back to the tool is always possible |
@@ -67,6 +67,50 @@ marked as awaiting its first release; absent, that passes, and a build of it on
 CI installs the releases the table names — reading the commands out of
 `doctor --json`, so there is one reader of the table — and then requires `doctor`
 to accept them. That is what makes the table a contract rather than a preference.
+
+## The version guard
+
+Nothing reaches a tool without its version being read and judged first. The
+judgement is the same one `doctor` reports, so a machine `doctor` calls green
+cannot be one the guard refuses, and the reverse. `fraise tool` is the face that
+reaches it directly — the fallback this README promises, available before the
+verbs are:
+
+```sh
+fraise tool confiture migrate status        # version-guarded, exit mapped
+fraise -C ../service tool fraiseql compile  # the tools run in the directory you name
+```
+
+A refusal exits with `precondition_failed`, the class the compatibility table
+names and the exit contract defines, and says what was found, what was allowed and
+how to install an allowed release. A tool's own exit arrives mapped through the
+exit table — fraiseql's 2 is a validation failure, so `fraise` exits 5 — while an
+exit the contract does not define passes through unchanged.
+
+The child's working directory is always passed explicitly, never inherited by
+accident. fraiseql's `compile` reads `fraiseql.toml` from the working directory,
+and run from a sibling directory it emitted 0 unions of 94 at exit 0
+(fraiseql#1387): a tool run in the wrong place can succeed at doing nothing.
+
+### The escape hatch
+
+A stack is sometimes mid-upgrade, and refusing to work is not always the kinder
+answer:
+
+```sh
+fraise --allow-version-skew tool fraiseql compile
+FRAISE_ALLOW_VERSION_SKEW=1 fraise tool fraiseql compile
+```
+
+What it will not do is tolerate a skew quietly: the version and the range it fell
+outside are reported before the verb runs. It covers a version the table disagrees
+with, and only that — a tool that is absent, or one whose version cannot be read,
+is not a skew, and treating it as one would invent permission nobody gave.
+
+This is also how specql is reached today. No release of it is published, so no
+version of it is vouched for; a local build is refused until you say
+`--allow-version-skew`, and that stays true until specql publishes a release the
+table can name.
 
 ## Build
 
