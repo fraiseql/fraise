@@ -20,6 +20,36 @@ What is being built, in order:
 | `fraise.toml` | the one file a project author writes; `fraise config sync` renders confiture's YAMLs from it, and `--check` fails on drift |
 | the verbs | `init check build migrate deploy status up`, each documented as the exact tool invocation it performs, so falling back to the tool is always possible |
 
+## Install
+
+Not on crates.io: `publish = false` until the first alpha, because a published crate
+that cannot do what its README describes is worse than no crate. Until then, from a
+release tarball — the way that needs no Rust toolchain:
+
+```sh
+tar xzf fraise-0.1.0-alpha.0-x86_64-unknown-linux-gnu.tar.gz
+install -m 0755 fraise-*/fraise ~/.local/bin/fraise
+```
+
+Beside the binary and the licence, the tarball holds the two documents that binary
+was compiled against — `exit_table.vendored.json` and `compatibility.toml`, under the
+names they have in the tree — so the range that refused a version on your machine is
+a file you can read next to the binary that refused it.
+
+Those copies are not taken on trust. Both documents are compiled into the binary, so
+a copy is a second source, and a shipped compatibility table that read wider than the
+binary's would call a machine ready that `fraise` refuses to dispatch on: the one way
+a document shipped for the reader is worse than no document. So the packaged binary is
+searched for each of them, byte for byte, and a tarball whose tables are not the ones
+its binary carries fails the gate rather than shipping.
+
+The Linux binary is linked against glibc 2.28 and held to a `GLIBC_2.34` ceiling, so
+it loads on Debian 10, Ubuntu 18.04 and RHEL 8 and newer. A plain `cargo build` floors
+a binary at the glibc of whatever built it, which is how fraisier's beta.4 tarball came
+to be a release that would not load on Debian 12. One target is built today; the rest
+arrive with the first published alpha. `tools/package.sh` builds one, and is told
+everything it needs: which build, which target, which version, where to leave it.
+
 ## The exit table
 
 The four tools number their failures four ways, and only confiture's numbering is
@@ -164,7 +194,7 @@ streams progress keeps streaming it to the terminal as it is written. Without
 
 ```sh
 cargo build --release      # target/release/fraise
-cargo xtask ci             # the gate CI runs: fmt, clippy -D warnings, tests
+cargo xtask ci             # the gate CI runs: shellcheck, fmt, clippy -D warnings, tests
 ```
 
 The gate measures the vendored exit table against a real confiture, so it needs
@@ -177,7 +207,8 @@ PATH=/tmp/confiture/bin:$PATH cargo xtask ci
 ```
 
 Requires stable Rust — the channel is pinned in `rust-toolchain.toml`, the MSRV
-(1.95) is `rust-version` in `Cargo.toml`.
+(1.95) is `rust-version` in `Cargo.toml` — and `shellcheck`, which the gate runs over
+`tools/` and which fails rather than skips when it is not installed.
 
 ## Design rules
 

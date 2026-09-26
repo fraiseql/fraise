@@ -7,11 +7,11 @@ it is talking to.
 
 ## Success Criteria
 
-- [ ] `fraise --version` prints the crate version, under house lints (`unsafe_code` forbid,
+- [x] `fraise --version` prints the crate version, under house lints (`unsafe_code` forbid,
       `missing_docs` deny, clippy all+pedantic+cargo deny, nursery warn)
-- [ ] The vendored exit table is confiture 1.19.0's `--exit-codes-json` compared **whole**,
+- [x] The vendored exit table is confiture 1.19.0's `--exit-codes-json` compared **whole**,
       failing — never skipping — when confiture is absent or unpinned
-- [ ] The per-tool mapping (fraiseql 2 → 5, specql 1 → 4/5 by class, fraisier 1 → 1) is
+- [x] The per-tool mapping (fraiseql 2 → 5, specql 1 → 4/5 by class, fraisier 1 → 1) is
       **inside that vendored document**, not a `match` statement (D7's condition)
 - [x] `fraise doctor` finds each of the four binaries and reports its version against the
       compatibility table
@@ -22,7 +22,7 @@ it is talking to.
 - [x] The global `--json` envelope carries `ok`, `command`, `tool`, `exit`, `tool_exit`,
       `payload`, `payload_kind` — the tool's raw exit beside the mapped one, and the payload
       never heuristically parsed (D3's condition)
-- [ ] `cargo xtask ci` green; release-plz configured; one release tarball built in CI
+- [x] `cargo xtask ci` green; release-plz configured; one release tarball built in CI
 
 ## TDD Cycles
 
@@ -101,7 +101,24 @@ enforces its need for `--json` where it is read.*
 - **REFACTOR**: one serializer; the mapping comes from Cycle 2's document.
 - **CLEANUP**: every field documented as what it means, not what it holds.
 
-### Cycle 6: `cargo xtask ci`, release-plz, one tarball
+### Cycle 6: `cargo xtask ci`, release-plz, one tarball — done 2026-09-26, CI green
+*Landed as 3 commits (`83759d9` RED, `f4f27a0` GREEN, `b1c0de2` REFACTOR and the cleanup this
+note is part of). `tools/package.sh` is told which build, which target, which version and where
+to leave the archive, and stages the binary, both tables and the licence under one directory:
+`fraise-0.1.0-alpha.0-x86_64-unknown-linux-gnu.tar.gz`, named for the crate's version because
+there is no tag on a version crates.io will not see. The judgement the cycle turned on is that
+both tables are `include_str!`-compiled in, so a shipped copy is a second source — the test
+searches the packaged binary for each document byte for byte, and for a one-byte drift of it to
+prove the search bites. That check is in the test and not in the script because a shell one
+cannot mean the same thing twice: `grep -F -f document binary` takes each line as its own
+pattern, and `grep` here is ugrep, where `-z` searches archives instead of splitting on NUL.
+`.github/workflows/release.yml` builds on a tag, on a release, on `workflow_dispatch` and on a
+pull request that changes what a tarball is — the last because `workflow_dispatch` only fires
+for a workflow already on the default branch, so without it this file's first run would have
+been after it merged. zig floors the binary at glibc 2.28 and objdump holds it to 2.34. No
+release-plz workflow: `gh secret list` on this repository is empty, so one added before the App
+credentials would be a red build on every push to main.*
+
 - **RED**: a test over `tools/package.sh`'s output asserting the tarball contains the binary,
   the vendored exit table, the compatibility table and the licence. Fails: no packaging.
 - **GREEN**: the script, the release workflow, `release-plz.toml` (publishing off until the
@@ -123,4 +140,6 @@ not be discovered late.
 
 ## Status
 
-[~] Planned 2026-09-25. Cycle 1 begins once the repository exists.
+[x] Complete 2026-09-26. Six cycles, 24 commits on `phase-02/the-binary`, both CI jobs and the
+release workflow green; every box of fraiseql/fraise#1 ticked. What Cycle 2 measured and could
+not fix is #3, which Phase 05 inherits.
