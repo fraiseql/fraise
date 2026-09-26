@@ -140,6 +140,6 @@ not be discovered late.
 
 ## Status
 
-[x] Complete 2026-09-26. Six cycles, 24 commits on `phase-02/the-binary`, both CI jobs and the
+[x] Complete 2026-09-26. Six cycles on `phase-02/the-binary`, both CI jobs and the
 release workflow green; every box of fraiseql/fraise#1 ticked. What Cycle 2 measured and could
 not fix is #3, which Phase 05 inherits.
