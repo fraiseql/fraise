@@ -1,0 +1,8 @@
+#!/bin/sh
+if [ "$1" = "--version" ]; then
+echo 'fraiseql 2.13.0'
+exit 0
+fi
+echo "args: $*" >'/home/lionel/code/fraise/target/tmp/envelope/tolerated/fraiseql.ran'
+echo '{"unions": 94}'
+exit 0

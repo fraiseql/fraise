@@ -1,0 +1,7 @@
+#!/bin/sh
+if [ "$1" = "--version" ]; then
+echo 'specql 2.0.0'
+exit 0
+fi
+{ echo "cwd: $(pwd -P)"; echo "args: $*"; } >'/home/lionel/code/fraise/target/tmp/guard/unvouched/specql.ran'
+exit 0

@@ -1,0 +1,3 @@
+#!/bin/sh
+echo ran >>'/home/lionel/code/fraise/target/tmp/guard/cached/counted.log'
+echo 'counted 1.2.3'

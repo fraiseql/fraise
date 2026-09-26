@@ -1,0 +1,4 @@
+#!/bin/sh
+echo 'confiture version 1.19.0'
+echo 'parser: native'
+echo 'extension: enabled'

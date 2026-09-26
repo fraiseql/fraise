@@ -289,22 +289,26 @@ impl Loaded {
 
         if !self.environments.is_empty() {
             text.push_str("\nenvironments\n");
+            let width = widest(self.environments.keys().map(String::as_str));
             for (name, environment) in &self.environments {
-                let _ = writeln!(text, "  {name}  {}", environment.database_url_env);
+                let _ = writeln!(text, "  {name:width$}  {}", environment.database_url_env);
             }
         }
 
         for (tool, table) in &self.written {
             let _ = writeln!(text, "\n[{tool}]");
-            for (path, value) in flattened(table, tool) {
-                let _ = writeln!(text, "  {path}  {value}");
+            let leaves = flattened(table, tool);
+            let width = widest(leaves.iter().map(|(path, _)| path.as_str()));
+            for (path, value) in &leaves {
+                let _ = writeln!(text, "  {path:width$}  {value}");
             }
         }
 
         if !self.from_env.is_empty() {
             text.push_str("\nfrom the environment, and not shown here\n");
+            let width = widest(self.from_env.keys().map(String::as_str));
             for (path, variables) in &self.from_env {
-                let _ = writeln!(text, "  {path}  {}", variables.join(", "));
+                let _ = writeln!(text, "  {path:width$}  {}", variables.join(", "));
             }
         }
         text
@@ -493,6 +497,13 @@ fn expand_value(
             .map(toml::Value::Array),
         other => Ok(other.clone()),
     }
+}
+
+/// The longest of `words`, which is what the column before a value is padded to. A report whose
+/// second column starts in a different place on every line is one a reader scans instead of
+/// reads, and `doctor`'s findings are aligned for the same reason.
+fn widest<'a>(words: impl Iterator<Item = &'a str>) -> usize {
+    words.map(str::len).max().unwrap_or_default()
 }
 
 /// A table's leaves as dotted paths, in the same spelling a refusal and `from_env` use, so a

@@ -7,9 +7,10 @@ rendered from it and marked generated.
 
 ## Success Criteria
 
-- [ ] `fraise.toml`: `[project]`, `[environments.<name>]` (DSN **env var name**, never a DSN),
+- [x] `fraise.toml`: `[project]`, `[environments.<name>]` (DSN **env var name**, never a DSN),
       `[specql]`, `[fraiseql]`, `[fraisier]`, `[confiture]` passthrough tables
-- [ ] strict `${VAR}` interpolation (confiture's rule), `deny_unknown_fields`, `FRAISE_` prefix
+- [~] strict `${VAR}` interpolation (confiture's rule) and `deny_unknown_fields` done;
+      `FRAISE_` overrides are Cycle 2's, with the reason below
 - [ ] `fraise config sync` writes `confiture.yaml` and `db/environments/<env>.yaml` with a
       generated-file header; confiture loads them without error (contract test runs confiture)
 - [ ] DSN precedence is confiture's ladder verbatim; ambient `DATABASE_URL` refused for
@@ -17,7 +18,16 @@ rendered from it and marked generated.
 
 ## TDD Cycles
 
-### Cycle 1: loader
+### Cycle 1: loader — done 2026-09-26
+*Landed as 4 commits (`aaa0cc9` RED, `5bbbf1b` GREEN, `0dd3deb` REFACTOR, and the cleanup this
+note is part of). `config.rs` holds the document, `interpolation.rs` confiture's rule; `Config`
+hands out nothing but `resolve`, so a `${VAR}` cannot be read as a value. The `${VAR}` table in
+`interpolation.rs` was measured against the pin before it was written, and it records one
+deliberate difference: confiture looks for an unclosed `${` only at the first one in a value, so
+`"${A} ${B"` expands there and is refused here — a document `fraise` accepts has to be one
+confiture accepts, not the reverse. `[refusal]` left `compatibility.toml` for the contract's
+`mappings.refusals`, so one document in the tree names a class. 75 tests, up from 54.*
+
 - **RED**: unknown key → refused naming the key; `${lower}` → refused; missing var → refused,
   each at the exit confiture's contract gives `invalid_config`
 - **GREEN**: serde + `deny_unknown_fields`; interpolation copied from confiture's `_env_vars.py`
@@ -86,5 +96,6 @@ compatibility table's own rows are Phase 02's and are not widened here.
 
 ## Status
 
-[~] In progress. Cycle 1 on `phase-03/one-config`, branched off `phase-02/the-binary`
-because `main` carries no crate yet and PR #2 is still in review.
+[~] In progress. Cycle 1 complete on `phase-03/one-config`, branched off
+`phase-02/the-binary` because `main` carries no crate yet and PR #2 is still in review.
+Cycles 2 and 3 are next; the two criteria they close are still unticked above.
