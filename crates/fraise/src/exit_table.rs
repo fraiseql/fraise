@@ -155,9 +155,13 @@ impl ExitTable {
         self.class_named(name)
     }
 
-    /// The class of that name, or `None` when the contract defines none. Private because a
-    /// name is how the *document* refers to a class; callers hold an [`ExitClass`].
-    fn class_named(&self, name: &str) -> Option<ExitClass<'_>> {
+    /// The class of that name, or `None` when the contract defines none.
+    ///
+    /// Crate-private, and only for a document of ours that names a class — the compatibility
+    /// table names the class it refuses with, and resolving it here is what keeps the
+    /// umbrella's one exit taxonomy in this contract. A caller outside holds an [`ExitClass`]
+    /// rather than a name.
+    pub(crate) fn class_named(&self, name: &str) -> Option<ExitClass<'_>> {
         let (exit, entry) = self.exits.iter().find(|(_, entry)| entry.class == name)?;
         Some(ExitClass {
             name: &entry.class,

@@ -16,8 +16,10 @@ categories = ["command-line-utilities", "development-tools"]
 
 [workspace.dependencies]
 clap = { version = "4", features = ["derive"] }
+semver = "1"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+toml = { version = "1", default-features = false, features = ["std", "parse", "serde"] }
 
 [workspace.lints.rust]
 unsafe_code = "forbid"

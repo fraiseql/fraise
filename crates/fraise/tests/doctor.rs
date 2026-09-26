@@ -33,8 +33,15 @@ fn stub_path(case: &str, programs: &[(&str, &str)]) -> PathBuf {
     fs::create_dir_all(&dir).expect("the stub directory is created");
     for (program, version_output) in programs {
         let path = dir.join(program);
-        fs::write(&path, format!("#!/bin/sh\ncat <<'STUB'\n{version_output}\nSTUB\n"))
-            .expect("the stub is written");
+        // `echo` and nothing else: `PATH` holds only this directory when the stubs run, so a
+        // stub that shelled out to `cat` would exit 127 instead of printing a version.
+        let mut script = String::from("#!/bin/sh\n");
+        for line in version_output.lines() {
+            script.push_str("echo '");
+            script.push_str(line);
+            script.push_str("'\n");
+        }
+        fs::write(&path, script).expect("the stub is written");
         fs::set_permissions(&path, fs::Permissions::from_mode(0o755))
             .expect("the stub is made executable");
     }
