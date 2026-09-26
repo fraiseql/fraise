@@ -9,7 +9,7 @@
 //! What it does own is making the answer actionable: every finding carries the range that was
 //! allowed, the row's reason and, when there is one, the command that installs an allowed
 //! release, so a reader can act without opening this repository. `--json` emits the same
-//! findings for a machine; Cycle 5's envelope will carry that document as its payload.
+//! findings for a machine, as the payload of the one envelope every command answers in.
 //!
 //! The exit is the contract. A machine that does not satisfy the table exits with the class
 //! the table names, and CI installs the releases the table names — by reading the table — and
@@ -20,6 +20,7 @@ use std::fmt::Write as _;
 use serde::Serialize;
 
 use crate::compatibility::{CompatibilityTable, Tool, Verdict};
+use crate::envelope::Payload;
 use crate::tool_version;
 
 /// One tool's row and what measuring it came to, which is the whole of what `doctor` has to
@@ -97,17 +98,17 @@ impl Report<'_> {
         }
     }
 
-    /// The findings as JSON, which is what CI reads and what Cycle 5's envelope will carry.
+    /// The findings as the envelope's payload: a document, because `fraise` produced it
+    /// itself and has no tool's word to take for it. This is what CI reads the install
+    /// commands out of.
     ///
     /// # Panics
     ///
     /// If the findings cannot be serialised, which is a bug in this module rather than a state
     /// a machine can be in.
     #[must_use]
-    pub fn to_json(&self) -> String {
-        let mut json = serde_json::to_string_pretty(self).expect("a finding serialises");
-        json.push('\n');
-        json
+    pub fn payload(&self) -> Payload {
+        Payload::Json(serde_json::to_value(self).expect("a finding serialises"))
     }
 
     /// The findings as a person reads them: one line each, and for anything that does not
@@ -258,7 +259,7 @@ mod tests {
         // shorter than the table: a tool that went unmeasured would read as a clean bill.
         let table = CompatibilityTable::vendored();
         let report = examine(table);
-        let json = report.to_json();
+        let json = serde_json::to_string(&report).expect("a report serialises");
         for tool in table.tools() {
             assert!(
                 json.contains(tool.name()),

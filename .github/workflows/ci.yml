@@ -65,7 +65,7 @@ jobs:
           # Exits non-zero precisely because nothing is installed yet, which is the report
           # this step reads the install commands out of.
           ./target/debug/fraise doctor --json >doctor-before.json || true
-          jq -r '.tools[] | select(.install != null) | .install' doctor-before.json |
+          jq -r '.payload.tools[] | select(.install != null) | .install' doctor-before.json |
             while read -r command; do
               echo "$ $command"
               sh -c "$command"

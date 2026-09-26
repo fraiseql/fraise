@@ -16,7 +16,7 @@
 //! (`--allow-version-skew`, `FRAISE_ALLOW_VERSION_SKEW`), because a stack is sometimes mid-
 //! upgrade and refusing to work is not always the kinder answer. What it will not do is
 //! tolerate it quietly: [`Cleared::tolerated`] carries what was let through, for the caller to
-//! say out loud and for Cycle 5's envelope to record. The hatch covers a version the table
+//! say out loud and for the envelope to record as a field. The hatch covers a version the table
 //! disagrees with, never a tool that is absent or a version that could not be read — those are
 //! not skew, and pretending to tolerate them would be inventing permission nobody gave.
 
@@ -24,9 +24,12 @@ use std::ffi::OsStr;
 use std::fmt;
 use std::io;
 use std::path::{Path, PathBuf};
-use std::process::{Command, ExitStatus};
+use std::process::{Command, ExitStatus, Stdio};
+
+use serde::Serialize;
 
 use crate::compatibility::{CompatibilityTable, Tool, Verdict};
+use crate::envelope::{Asked, Payload};
 use crate::exit_table::{ExitClass, ExitTable};
 use crate::tool_version::{self, Reading};
 
@@ -79,7 +82,7 @@ impl<'a> Dispatcher<'a> {
     ///
     /// If the table does not name the tool, or names a version of it that is not the one
     /// installed — unless the caller asked for that skew to be tolerated.
-    pub fn clear(&self, tool: &str) -> Result<Cleared<'_>, Refusal> {
+    pub fn clear(&self, tool: &str) -> Result<Cleared<'a>, Refusal> {
         let Some(row) = self.table.tool(tool) else {
             return Err(self.refuse(unknown_tool(tool, self.table)));
         };
@@ -109,19 +112,38 @@ impl<'a> Dispatcher<'a> {
 
     /// Run the verb. The only way to hold a [`Cleared`] is to have passed the guard.
     ///
+    /// What was [`Asked`] for decides how the child's streams are wired. Asked for nothing,
+    /// the child writes to `fraise`'s own, so a tool that streams progress to a terminal
+    /// still does. Asked for an answer, its standard output is captured — an envelope and a
+    /// tool cannot both own standard output — while its standard error stays the terminal's,
+    /// which is where a tool's progress and diagnostics belong and where they keep arriving
+    /// as they are written.
+    ///
     /// # Errors
     ///
     /// If the child cannot be started — which after a successful `--version` means the machine
     /// changed underneath us.
-    pub fn run<S: AsRef<OsStr>>(&self, cleared: Cleared<'_>, args: &[S]) -> io::Result<Outcome> {
-        let status = Command::new(cleared.row.program())
-            .args(args)
-            .current_dir(&self.directory)
-            .status()?;
+    pub fn run<S: AsRef<OsStr>>(
+        &self,
+        cleared: Cleared<'a>,
+        args: &[S],
+        asked: Asked,
+    ) -> io::Result<Outcome<'a>> {
+        let mut command = Command::new(cleared.row.program());
+        command.args(args).current_dir(&self.directory);
+        let (status, output) = match asked {
+            Asked::Nothing => (command.status()?, Vec::new()),
+            Asked::Text | Asked::Json => {
+                let captured = command.stdout(Stdio::piped()).spawn()?.wait_with_output()?;
+                (captured.status, captured.stdout)
+            },
+        };
         Ok(Outcome {
+            tool: cleared.row.name(),
             exit: self.mapped_exit(cleared.row.name(), status),
             tool_exit: status.code(),
             tolerated: cleared.tolerated,
+            payload: Payload::captured(asked, &output),
         })
     }
 
@@ -164,7 +186,10 @@ impl Cleared<'_> {
 }
 
 /// A version the table does not allow, proceeding because the caller said to.
-#[derive(Debug, Clone, PartialEq, Eq)]
+///
+/// Its three parts are what the envelope's `tolerated` field carries; the prose below is for
+/// the terminal.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct Skew {
     tool: String,
     found: String,
@@ -202,23 +227,32 @@ impl Refusal {
     }
 }
 
-/// What a dispatch came to.
+/// What a dispatch came to, which is everything the envelope has to report about it.
 #[derive(Debug)]
-pub struct Outcome {
+pub struct Outcome<'a> {
+    tool: &'a str,
     exit: i32,
     tool_exit: Option<i32>,
     tolerated: Option<Skew>,
+    payload: Payload,
 }
 
-impl Outcome {
+impl<'a> Outcome<'a> {
+    /// The tool this dispatch crossed into, as the compatibility table names it.
+    #[must_use]
+    pub const fn tool(&self) -> &'a str {
+        self.tool
+    }
+
     /// The exit for `fraise` itself: the tool's exit, in the umbrella's taxonomy.
     #[must_use]
     pub const fn exit(&self) -> i32 {
         self.exit
     }
 
-    /// The tool's own exit, unmapped, or `None` when a signal ended it. Cycle 5's envelope
-    /// carries this beside the mapped one; the process can only return one number.
+    /// The tool's own exit, unmapped, or `None` when a signal ended it — a process ended by a
+    /// signal never returned a number. The envelope carries this beside the mapped one; the
+    /// process itself can only return one.
     #[must_use]
     pub const fn tool_exit(&self) -> Option<i32> {
         self.tool_exit
@@ -228,6 +262,12 @@ impl Outcome {
     #[must_use]
     pub const fn tolerated(&self) -> Option<&Skew> {
         self.tolerated.as_ref()
+    }
+
+    /// What the tool had to say, as whatever it was asked for makes it.
+    #[must_use]
+    pub const fn payload(&self) -> &Payload {
+        &self.payload
     }
 }
 

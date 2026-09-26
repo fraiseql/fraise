@@ -5,7 +5,7 @@
 
 use std::path::PathBuf;
 
-use clap::{Parser, Subcommand};
+use clap::{Parser, Subcommand, ValueEnum};
 
 /// The umbrella command.
 #[derive(Debug, Parser)]
@@ -19,8 +19,8 @@ pub struct Cli {
     /// Report as JSON instead of as text.
     ///
     /// Global from the start because it is the same promise for every verb: the machine
-    /// reading `fraise` gets a document rather than a shape it has to recognise. Cycle 5
-    /// makes that document one envelope; today it is the command's own report.
+    /// reading `fraise` gets one envelope rather than a shape it has to recognise per
+    /// command.
     #[arg(long, global = true)]
     pub json: bool,
 
@@ -62,6 +62,19 @@ pub enum Command {
     /// The fallback the face promises: whatever the verbs do not cover yet, the tool itself
     /// can still be reached, with the version checked and the exit mapped.
     Tool {
+        /// What the tool's standard output is, when `--json` makes an envelope of it.
+        ///
+        /// `fraise` never decides this by looking at the output: text that looks like JSON
+        /// is text. Only the caller that wrote the tool's arguments knows whether they asked
+        /// it for a document, so the caller is who says.
+        ///
+        /// It needs `--json`, which is enforced where it is read rather than by clap's
+        /// `requires`: a global given before the subcommand — `fraise --json tool …`, the
+        /// spelling this face documents — is not visible to the subcommand's own validation
+        /// (measured, clap 4).
+        #[arg(long, value_name = "KIND")]
+        payload: Option<PayloadMode>,
+
         /// The tool, as the compatibility table names it.
         tool: String,
 
@@ -69,4 +82,25 @@ pub enum Command {
         #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
         args: Vec<String>,
     },
+}
+
+impl Command {
+    /// The verb as the face spells it, which is what the envelope reports as `command`.
+    #[must_use]
+    pub const fn name(&self) -> &'static str {
+        match self {
+            Self::Doctor => "doctor",
+            Self::Tool { .. } => "tool",
+        }
+    }
+}
+
+/// What a tool was asked for, as the face lets a caller say it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+pub enum PayloadMode {
+    /// Bytes, carried exactly as the tool wrote them. The default, because it assumes
+    /// nothing about a tool's output.
+    Text,
+    /// A document, because the arguments given to the tool asked it for one.
+    Json,
 }

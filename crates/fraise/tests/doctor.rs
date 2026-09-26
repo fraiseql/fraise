@@ -59,15 +59,18 @@ fn doctor(path: &Path, args: &[&str]) -> Output {
         .expect("the built binary runs")
 }
 
-/// The report as JSON, which is the form CI reads.
+/// The report as JSON, which is the form CI reads: the payload of the one envelope every
+/// command answers in under `--json`.
 fn report(output: &Output) -> serde_json::Value {
-    serde_json::from_slice(&output.stdout).unwrap_or_else(|error| {
-        panic!(
-            "`fraise doctor --json` did not emit JSON ({error}); stdout: {}; stderr: {}",
-            String::from_utf8_lossy(&output.stdout),
-            String::from_utf8_lossy(&output.stderr)
-        )
-    })
+    let envelope: serde_json::Value =
+        serde_json::from_slice(&output.stdout).unwrap_or_else(|error| {
+            panic!(
+                "`fraise doctor --json` did not emit JSON ({error}); stdout: {}; stderr: {}",
+                String::from_utf8_lossy(&output.stdout),
+                String::from_utf8_lossy(&output.stderr)
+            )
+        });
+    envelope["payload"].clone()
 }
 
 /// One tool's finding, by the tool's name rather than by position.

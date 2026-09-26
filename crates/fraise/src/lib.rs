@@ -6,5 +6,6 @@
 pub mod compatibility;
 pub mod dispatch;
 pub mod doctor;
+pub mod envelope;
 pub mod exit_table;
 pub mod tool_version;
