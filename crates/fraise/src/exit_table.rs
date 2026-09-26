@@ -9,10 +9,14 @@
 //! `mappings`, saying what each tool's raw exit means in confiture's classes.
 //!
 //! The mapping lives *inside* the vendored document on purpose. A `match` statement
-//! drifts in silence; a document is diffed. Every class a mapping row names must be one
-//! the confiture half lists, which is what keeps the two halves one table rather than
-//! two, and is why no confiture class string is ever written in this crate's source: a
-//! class is a `&str` borrowed from the document and nothing else.
+//! drifts in silence; a document is diffed.
+//!
+//! No class name is ever written in this crate's source, and the types are what stop it:
+//! an [`ExitClass`] is built only by [`ExitTable`] out of the document, from a name the
+//! document defines, so there is no literal a caller could compare against and no way to
+//! spell a tenth class. [`ExitTable::parse`] refuses a document whose halves disagree —
+//! a mapping row onto a class the contract does not define, a class given to two exits —
+//! so the guard is in force at load rather than discovered on a live dispatch.
 //!
 //! The freshness test below compares the confiture half **whole** against what the
 //! pinned confiture emits, and **fails rather than skips** when confiture is missing or
@@ -37,86 +41,266 @@
 //! `json.dumps(…, indent=2)` is confiture's own rendering, so the confiture half of the
 //! file comes back byte for byte.
 
+use std::collections::{BTreeMap, BTreeSet};
 use std::sync::OnceLock;
 
-use serde_json::Value;
+use serde::Deserialize;
 
 /// The contract document, compiled into the binary so a released `fraise` carries the
 /// same table its tests measured.
 const VENDORED: &str = include_str!("exit_table.vendored.json");
 
+/// One class of confiture's taxonomy, as the vendored document defines it.
+///
+/// There is no constructor: a class is handed out by [`ExitTable`] and borrows its name
+/// from the document, which is what keeps the taxonomy in the document and out of the
+/// source. Two classes are equal when they are the same class.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ExitClass<'a> {
+    name: &'a str,
+    exit: i32,
+    meaning: &'a str,
+}
+
+impl<'a> ExitClass<'a> {
+    /// The class's name, as confiture spells it on the wire.
+    #[must_use]
+    pub const fn name(self) -> &'a str {
+        self.name
+    }
+
+    /// The exit integer confiture itself returns for this class. Classes and exits are
+    /// one-to-one, which [`ExitTable::parse`] enforces.
+    #[must_use]
+    pub const fn exit(self) -> i32 {
+        self.exit
+    }
+
+    /// Confiture's one-line meaning for that exit — the sentence to show a person, rather
+    /// than the name to match on.
+    #[must_use]
+    pub const fn meaning(self) -> &'a str {
+        self.meaning
+    }
+}
+
 /// Confiture's exit-code contract, with the per-tool mapping that turns another tool's
 /// raw exit into one of its classes.
 ///
-/// Obtained from [`ExitTable::vendored`]; there is no other constructor, because there is
-/// no other table.
+/// Obtained from [`ExitTable::vendored`]; there is no other table.
 #[derive(Debug)]
 pub struct ExitTable {
-    document: Value,
+    exits: BTreeMap<i32, ExitEntry>,
+    tools: BTreeMap<String, ToolMapping>,
 }
 
 impl ExitTable {
-    /// The vendored table, parsed once per process.
+    /// The vendored table, parsed and checked once per process.
     ///
     /// # Panics
     ///
-    /// If the vendored document is not JSON. It is compiled in, so that is a build the
-    /// tests below would have failed before it ever shipped.
+    /// If the vendored document is not a contract this loader accepts. It is compiled in,
+    /// so that is a build the tests below would have failed before it ever shipped.
     #[must_use]
     pub fn vendored() -> &'static Self {
         static TABLE: OnceLock<ExitTable> = OnceLock::new();
-        TABLE.get_or_init(|| Self {
-            document: serde_json::from_str(VENDORED).expect("the vendored document is JSON"),
+        TABLE.get_or_init(|| {
+            Self::parse(VENDORED).unwrap_or_else(|error| panic!("the vendored contract: {error}"))
         })
-    }
-
-    /// The whole document, for the freshness comparison — the only caller that wants the
-    /// table unprojected, because it is the one that holds it to the tool.
-    #[must_use]
-    pub const fn document(&self) -> &Value {
-        &self.document
     }
 
     /// The semantic class confiture gives its own exit `exit`, or `None` for an exit it
     /// does not document.
+    ///
+    /// This is how a *confiture* exit is read. Confiture has no entry under `mappings`
+    /// because this map is already its table, and one table is the point.
     #[must_use]
-    pub fn class_of_exit(&self, exit: i32) -> Option<&str> {
-        self.document["exit_codes"][exit.to_string()]["class"].as_str()
-    }
-
-    /// The confiture exit integer whose class is `class`, or `None` when no class of that
-    /// name is in the table. The two are one-to-one, so this is the inverse of
-    /// [`class_of_exit`](Self::class_of_exit).
-    #[must_use]
-    pub fn exit_of_class(&self, class: &str) -> Option<i32> {
-        self.document["exit_codes"]
-            .as_object()?
-            .iter()
-            .find(|(_, entry)| entry["class"].as_str() == Some(class))
-            .and_then(|(exit, _)| exit.parse().ok())
+    pub fn class_of_exit(&self, exit: i32) -> Option<ExitClass<'_>> {
+        let entry = self.exits.get(&exit)?;
+        Some(ExitClass {
+            name: &entry.class,
+            exit,
+            meaning: &entry.meaning,
+        })
     }
 
     /// The confiture class that `tool`'s exit `tool_exit` means.
     ///
     /// `error_class` is the tool's own error taxonomy name when the tool reports one, and
     /// `None` when it does not — which is every tool today. A row for the exact pair wins;
-    /// otherwise the exit's `error_class: null` row answers; otherwise the tool's
-    /// `unlisted` fallback does. `None` means the table knows no such tool, which is not a
-    /// classification but a refusal.
+    /// otherwise the exit's unrefined row answers; otherwise the tool's `unlisted` class
+    /// does. `None` means the table knows no such tool, which is not a classification but
+    /// a refusal.
     #[must_use]
-    pub fn classify(&self, tool: &str, tool_exit: i32, error_class: Option<&str>) -> Option<&str> {
-        let entry = &self.document["mappings"]["tools"][tool];
-        let rows = entry["rows"].as_array()?;
-        let same_exit = |row: &&Value| row["tool_exit"].as_i64() == Some(i64::from(tool_exit));
-        let exact = error_class.and_then(|class| {
-            rows.iter()
-                .find(|row| same_exit(row) && row["error_class"].as_str() == Some(class))
+    pub fn classify(
+        &self,
+        tool: &str,
+        tool_exit: i32,
+        error_class: Option<&str>,
+    ) -> Option<ExitClass<'_>> {
+        let mapping = self.tools.get(tool)?;
+        let refined = error_class.and_then(|class| {
+            mapping
+                .rows
+                .iter()
+                .find(|row| row.tool_exit == tool_exit && row.error_class.as_deref() == Some(class))
         });
-        exact
-            .or_else(|| rows.iter().find(|row| same_exit(row) && row["error_class"].is_null()))
-            .and_then(|row| row["class"].as_str())
-            .or_else(|| entry["unlisted"]["class"].as_str())
+        let row = refined.or_else(|| {
+            mapping
+                .rows
+                .iter()
+                .find(|row| row.tool_exit == tool_exit && row.error_class.is_none())
+        });
+        let name = row.map_or(mapping.unlisted.class.as_str(), |row| row.class.as_str());
+        self.class_named(name)
     }
+
+    /// The class of that name, or `None` when the contract defines none. Private because a
+    /// name is how the *document* refers to a class; callers hold an [`ExitClass`].
+    fn class_named(&self, name: &str) -> Option<ExitClass<'_>> {
+        let (exit, entry) = self.exits.iter().find(|(_, entry)| entry.class == name)?;
+        Some(ExitClass {
+            name: &entry.class,
+            exit: *exit,
+            meaning: &entry.meaning,
+        })
+    }
+
+    /// Parse a contract document and refuse one whose halves disagree.
+    ///
+    /// Checked here rather than at the point of use, so a document that could misclassify
+    /// a dispatch cannot load at all: every class an exit or a mapping row names is one
+    /// the contract lists, no class is given to two exits (or reading a class back would
+    /// be ambiguous), every class has an exit, and no tool maps the same
+    /// `(exit, error class)` twice.
+    fn parse(source: &str) -> Result<Self, String> {
+        let document: Document = serde_json::from_str(source)
+            .map_err(|error| format!("this is not a contract document: {error}"))?;
+        let known = |class: &str, named_by: &str| {
+            if document.classes.iter().any(|listed| listed == class) {
+                Ok(())
+            } else {
+                Err(format!(
+                    "{named_by} is classed {class}, which the contract's `classes` do not list"
+                ))
+            }
+        };
+
+        let mut exits = BTreeMap::new();
+        for (exit, entry) in document.exit_codes {
+            let exit: i32 = exit
+                .parse()
+                .map_err(|_| format!("`exit_codes` is keyed on {exit:?}, not an exit integer"))?;
+            known(&entry.class, &format!("exit {exit}"))?;
+            if exits.values().any(|other: &ExitEntry| other.class == entry.class) {
+                return Err(format!(
+                    "the class {} is given to more than one exit, so reading it back would be \
+                     ambiguous",
+                    entry.class
+                ));
+            }
+            exits.insert(exit, entry);
+        }
+        if exits.len() != document.classes.len() {
+            return Err(format!(
+                "the contract names {} classes and gives exits to {}, so at least one class \
+                 cannot be reached",
+                document.classes.len(),
+                exits.len()
+            ));
+        }
+
+        for (tool, mapping) in &document.mappings.tools {
+            let mut seen = BTreeSet::new();
+            for row in &mapping.rows {
+                known(&row.class, &format!("{tool}'s exit {}", row.tool_exit))?;
+                if !seen.insert((row.tool_exit, row.error_class.clone())) {
+                    return Err(format!(
+                        "{tool} maps exit {} / error class {:?} more than once",
+                        row.tool_exit, row.error_class
+                    ));
+                }
+            }
+            known(&mapping.unlisted.class, &format!("{tool}'s unlisted exits"))?;
+        }
+
+        Ok(Self {
+            exits,
+            tools: document.mappings.tools,
+        })
+    }
+}
+
+/// The document as it is written. Confiture's half tolerates fields this loader does not
+/// read — the freshness test is what holds that half to the tool, and a released binary
+/// should not refuse to start because confiture added a key. The face's half does not:
+/// see [`Mappings`].
+#[derive(Debug, Deserialize)]
+struct Document {
+    classes: Vec<String>,
+    exit_codes: BTreeMap<String, ExitEntry>,
+    mappings: Mappings,
+}
+
+/// One exit of confiture's own table.
+#[derive(Debug, Deserialize)]
+struct ExitEntry {
+    class: String,
+    meaning: String,
+}
+
+/// The face's section. It and everything under it deny unknown fields: this half is ours,
+/// so a misspelled key is a mistake rather than news from upstream — and `note` and `why`
+/// being required is how a row cannot be added without saying why it reads that way.
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Mappings {
+    #[allow(
+        dead_code,
+        reason = "read by a person reading the document, not by the loader"
+    )]
+    note: String,
+    tools: BTreeMap<String, ToolMapping>,
+}
+
+/// One tool's mapping into confiture's classes.
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ToolMapping {
+    #[allow(dead_code, reason = "where the tool's own exits were read, and when")]
+    source: String,
+    #[allow(
+        dead_code,
+        reason = "what was measured, including what is deliberately unmapped"
+    )]
+    note: String,
+    rows: Vec<Row>,
+    unlisted: Unlisted,
+}
+
+/// One row: this exit, under this error class, reads as this confiture class.
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Row {
+    tool_exit: i32,
+    /// The tool's own error taxonomy name, or `null` for the unrefined reading of that
+    /// exit. No tool reports one at the process boundary yet.
+    error_class: Option<String>,
+    class: String,
+    #[allow(
+        dead_code,
+        reason = "the reason the row reads that way; required, so it is given"
+    )]
+    why: String,
+}
+
+/// What an exit the tool does not document reads as.
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Unlisted {
+    class: String,
+    #[allow(dead_code, reason = "the reason the fallback is that class; required")]
+    why: String,
 }
 
 #[cfg(test)]
@@ -125,9 +309,9 @@ mod tests {
 
     /// D7's mapping, written in the decision's own vocabulary — a tool's raw exit, the
     /// error class it reports when it reports one, and the **confiture exit integer** the
-    /// face reads it as. Integers rather than class names on the right-hand side so this
-    /// table is an independent statement of the decision ("fraiseql 2 → 5, specql 1 → 4/5
-    /// by class, fraisier 1 → 1") and not a second reading of the document under test.
+    /// face reads it as. Integers on the right so this table is an independent statement of
+    /// the decision ("fraiseql 2 → 5, specql 1 → 4/5 by class, fraisier 1 → 1") rather than
+    /// a second reading of the document under test, and so it names no class either.
     const MAPPING: &[(&str, i32, Option<&str>, i32)] = &[
         // fraiseql: 0 success, 1 error, 2 validation_failed — its whole documented table
         // (`get_exit_codes()`, enforced by `enforce_exit_code()`).
@@ -155,20 +339,17 @@ mod tests {
     #[test]
     fn the_mapping_rows_come_from_the_vendored_document() {
         let table = ExitTable::vendored();
-        assert!(
-            table.document().get("mappings").is_some(),
-            "the vendored document carries no `mappings` section — the per-tool mapping is \
-             supposed to live inside it, not in a `match` statement (D7)"
-        );
         for (tool, tool_exit, error_class, confiture_exit) in MAPPING {
             let class = table.classify(tool, *tool_exit, *error_class).unwrap_or_else(|| {
                 panic!("the table maps no exit of {tool}: classify({tool_exit}, {error_class:?})")
             });
             assert_eq!(
-                table.exit_of_class(class),
-                Some(*confiture_exit),
-                "{tool} exit {tool_exit} (error class {error_class:?}) reads as {class}, and the \
-                 mapping says it should read as confiture's exit {confiture_exit}"
+                class.exit(),
+                *confiture_exit,
+                "{tool} exit {tool_exit} (error class {error_class:?}) reads as {} ({}), and the \
+                 mapping says it should read as confiture's exit {confiture_exit}",
+                class.name(),
+                class.meaning()
             );
         }
     }
@@ -181,44 +362,63 @@ mod tests {
     }
 
     #[test]
-    fn every_class_a_mapping_row_names_is_one_the_contract_lists() {
-        // This is what keeps the two halves of the document one table. A row naming a class
-        // confiture does not define would classify into nothing, and `exit_of_class` would
-        // return `None` on a live dispatch rather than at rest.
+    fn a_confiture_exit_is_read_from_the_contract_itself() {
+        // Confiture is absent from `mappings` on purpose: its own half of the document is
+        // already its table, so the loader must answer for it without a mapping row.
         let table = ExitTable::vendored();
-        let document = table.document();
-        let classes: Vec<&str> = document["classes"]
-            .as_array()
-            .expect("the contract lists its classes")
-            .iter()
-            .map(|class| class.as_str().expect("a class is a string"))
-            .collect();
-        // The confiture half is one-to-one: nine classes, nine exits, no class unreachable.
-        for class in &classes {
-            assert!(
-                table.exit_of_class(class).is_some(),
-                "the contract names the class {class} and gives it no exit"
-            );
-        }
-        let tools = document["mappings"]["tools"]
-            .as_object()
-            .expect("the mapping names the tools it maps");
-        for (tool, entry) in tools {
-            let named = entry["rows"]
-                .as_array()
-                .unwrap_or_else(|| panic!("{tool} has no mapping rows"))
-                .iter()
-                .map(|row| &row["class"])
-                .chain(std::iter::once(&entry["unlisted"]["class"]));
-            for class in named {
-                let class =
-                    class.as_str().unwrap_or_else(|| panic!("{tool} names a non-string class"));
-                assert!(
-                    classes.contains(&class),
-                    "{tool} maps onto {class}, which confiture's half of the document does not list"
-                );
-            }
-        }
+        let ok = table.class_of_exit(0).expect("confiture documents exit 0");
+        assert_eq!(ok.exit(), 0);
+        assert_eq!(table.classify("confiture", 0, None), None);
+        assert_eq!(table.class_of_exit(9), None, "confiture documents 0..=8");
+    }
+
+    /// The vendored document with one thing changed, for the refusals below: the guard
+    /// matters only if it is in force, and the way to show that is to hand it a document it
+    /// must refuse.
+    fn doctored(change: impl FnOnce(&mut serde_json::Value)) -> String {
+        let mut document: serde_json::Value =
+            serde_json::from_str(VENDORED).expect("the vendored document parses");
+        change(&mut document);
+        document.to_string()
+    }
+
+    #[test]
+    fn a_mapping_onto_a_class_the_contract_does_not_define_is_refused() {
+        let source = doctored(|document| {
+            document["mappings"]["tools"]["specql"]["rows"][0]["class"] =
+                serde_json::Value::from("catastrophe");
+        });
+        let error = ExitTable::parse(&source).expect_err("the halves disagree");
+        assert!(
+            error.contains("catastrophe") && error.contains("classes"),
+            "the refusal should name the class and where it should have been listed: {error}"
+        );
+    }
+
+    #[test]
+    fn a_class_given_to_two_exits_is_refused() {
+        // `classify` reaches a class by name, so a name that belongs to two exits would make
+        // the exit it reports depend on iteration order.
+        let source = doctored(|document| {
+            let ok = document["exit_codes"]["0"]["class"].clone();
+            document["exit_codes"]["4"]["class"] = ok;
+        });
+        let error = ExitTable::parse(&source).expect_err("a class belongs to one exit");
+        assert!(
+            error.contains("more than one exit"),
+            "the refusal should say the class is not one-to-one: {error}"
+        );
+    }
+
+    #[test]
+    fn a_row_without_its_reason_is_refused() {
+        // `why` is required so that no exit acquires a reading nobody had to justify.
+        let source = doctored(|document| {
+            let row = &mut document["mappings"]["tools"]["fraisier"]["rows"][1];
+            row.as_object_mut().expect("a row is an object").remove("why");
+        });
+        let error = ExitTable::parse(&source).expect_err("the row gives no reason");
+        assert!(error.contains("why"), "the refusal should name the missing field: {error}");
     }
 
     /// The confiture release the contract is measured against, read out of
@@ -330,9 +530,8 @@ mod tests {
         // The cross-repo freshness check, and the one that has to compare the WHOLE
         // document. Reducing it to the integer→class map is what let fraisier-core carry a
         // table stale in eight of nine entries while both its guards stayed green
-        // (fraisier-core#63), and a guard that skips when the tool is absent is a guard
-        // that has never run. A missing or unpinned confiture is a failure here, never a
-        // skip.
+        // (fraisier-core#63), and a guard that skips when the tool is absent is a guard that
+        // has never run. A missing or unpinned confiture is a failure here, never a skip.
         let pin = pinned_confiture_version();
         let program = confiture_program();
         let shown = program.to_string_lossy().into_owned();
@@ -371,22 +570,25 @@ mod tests {
             serde_json::from_slice(&output.stdout).expect("confiture emits JSON");
         assert!(
             live.get("mappings").is_none(),
-            "confiture {pin} now emits a `mappings` key of its own, so the face's section can \
-             no longer be told from the tool's — rename ours before regenerating"
+            "confiture {pin} now emits a `mappings` key of its own, so the face's section can no \
+             longer be told from the tool's — rename ours before regenerating"
         );
 
         // The face's own section is lifted out and the rest is held to the tool whole, so a
         // key confiture adds or drops still fails here.
         let mut vendored: serde_json::Value =
             serde_json::from_str(VENDORED).expect("the vendored document parses");
-        if let Some(document) = vendored.as_object_mut() {
-            document.remove("mappings");
-        }
+        let lifted = vendored.as_object_mut().and_then(|document| document.remove("mappings"));
+        assert!(
+            lifted.is_some(),
+            "the vendored document carries no `mappings` section — the per-tool mapping is \
+             supposed to live inside it, not in a `match` statement (D7)"
+        );
         assert_eq!(
             live,
             vendored,
-            "the confiture half of exit_table.vendored.json is not what confiture {pin} emits. \
-             It drifts at:\n{}\nRegenerate it with the command in this module's docs.",
+            "the confiture half of exit_table.vendored.json is not what confiture {pin} emits. It \
+             drifts at:\n{}\nRegenerate it with the command in this module's docs.",
             describe_drift(&live, &vendored)
         );
     }
