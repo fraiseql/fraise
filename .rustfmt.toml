@@ -1,0 +1,23 @@
+# Rustfmt configuration.
+#
+# Only options that stable rustfmt honours are set. fraiseql's file carries a
+# dozen nightly-only options, which stable silently ignores — so `cargo fmt`
+# there formats differently depending on the toolchain that runs it, and its
+# gate installed a floating nightly (fraiseql #1380: one untouched macro body
+# reddened every open PR the morning a new nightly shipped). `rust-toolchain.toml`
+# pins stable here, and this file asks stable for nothing it cannot do.
+
+chain_width = 80
+edition = "2021"
+fn_call_width = 80
+fn_params_layout = "Tall"
+hard_tabs = false
+match_arm_leading_pipes = "Never"
+match_block_trailing_comma = true
+max_width = 100
+newline_style = "Unix"
+reorder_imports = true
+reorder_modules = true
+style_edition = "2024"
+tab_spaces = 4
+use_small_heuristics = "Default"
