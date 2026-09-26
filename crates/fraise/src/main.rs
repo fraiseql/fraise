@@ -2,12 +2,11 @@
 //!
 //! The umbrella owns the face; the four tools underneath keep their contracts.
 
+mod cli;
+
 use clap::Parser;
 
-/// The umbrella command.
-#[derive(Parser)]
-#[command(name = "fraise", version, about = "One command for the FraiseQL stack")]
-struct Cli {}
+use crate::cli::Cli;
 
 fn main() {
     let Cli {} = Cli::parse();
