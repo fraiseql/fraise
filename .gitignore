@@ -16,3 +16,6 @@ Cargo.lock.orig
 # OS
 .DS_Store
 Thumbs.db
+
+# Development
+.phases/
