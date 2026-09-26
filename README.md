@@ -208,7 +208,9 @@ PATH=/tmp/confiture/bin:$PATH cargo xtask ci
 
 Requires stable Rust — the channel is pinned in `rust-toolchain.toml`, the MSRV
 (1.95) is `rust-version` in `Cargo.toml` — and `shellcheck`, which the gate runs over
-`tools/` and which fails rather than skips when it is not installed.
+`tools/` and which fails rather than skips when it is not installed. The scripts are kept
+clean under 0.9.0, which is what the CI runner image carries, as well as under current
+releases.
 
 ## Design rules
 

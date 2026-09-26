@@ -56,6 +56,14 @@ fn ci() -> ExitCode {
 /// it is part of this one — and the scripts are found rather than named, so the next one is
 /// linted without anyone remembering to add it. A `tools/` that has stopped holding scripts
 /// fails here instead of quietly linting nothing.
+///
+/// Every severity, and no version pin. Which findings exist does depend on the shellcheck that
+/// runs — the runner image carries 0.9.0 and this machine 0.11.0, and the first thing this gate
+/// caught was a line only 0.9.0 objected to (`SC2015`, `A && B || C`) — so the scripts are kept
+/// clean under both rather than held to a severity floor that would silence a class of finding
+/// for good. A future release adding an info-level check can still redden an untouched tree;
+/// that is one commit and usually advice worth taking, which is not the same kind of problem as
+/// a formatter whose output depends on its toolchain.
 fn shellcheck() -> bool {
     let scripts = scripts();
     if scripts.is_empty() {

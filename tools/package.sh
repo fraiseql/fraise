@@ -66,7 +66,9 @@ while [ "$#" -gt 0 ]; do
 	esac
 done
 
-[ -n "$binary" ] && [ -n "$target" ] && [ -n "$version" ] && [ -n "$out" ] || usage
+if [ -z "$binary" ] || [ -z "$target" ] || [ -z "$version" ] || [ -z "$out" ]; then
+	usage
+fi
 [ -f "$binary" ] || fail "no such binary: $binary"
 
 # The repository this script is part of, so that it packages the tables of the tree it was run
