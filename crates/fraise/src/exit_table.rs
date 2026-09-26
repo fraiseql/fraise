@@ -18,6 +18,12 @@
 //! a mapping row onto a class the contract does not define, a class given to two exits —
 //! so the guard is in force at load rather than discovered on a live dispatch.
 //!
+//! The face's own refusals are in that section too, as [`Refusal`]: a `fraise.toml` nothing
+//! can act on is a failure of `fraise` rather than of a tool, and saying what it comes to is
+//! the same kind of statement as saying what fraiseql's exit 2 comes to. Keeping them here is
+//! what makes the umbrella's exits one taxonomy in one document, rather than a class name
+//! written wherever a refusal happens.
+//!
 //! The freshness test below compares the confiture half **whole** against what the
 //! pinned confiture emits, and **fails rather than skips** when confiture is missing or
 //! is a different release. The pin is `tools/confiture-requirements.txt`, CI installs it
@@ -84,13 +90,37 @@ impl<'a> ExitClass<'a> {
     }
 }
 
+/// One refusal `fraise` makes on its own account, which the contract gives a class.
+///
+/// A refusal is named here and classed in the document, never the other way round: the
+/// variants are what the binary can refuse for, and [`ExitTable::parse`] holds the document to
+/// naming every one of them, so a refusal that could not be given an exit fails at load.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Refusal {
+    /// `fraise.toml` is not a document this face can act on.
+    Configuration,
+}
+
+impl Refusal {
+    /// Every refusal the binary can make, which is what the document must speak for.
+    const ALL: [Self; 1] = [Self::Configuration];
+
+    /// The key this refusal has in the contract's `mappings.refusals` section.
+    const fn key(self) -> &'static str {
+        match self {
+            Self::Configuration => "invalid_configuration",
+        }
+    }
+}
+
 /// Confiture's exit-code contract, with the per-tool mapping that turns another tool's
-/// raw exit into one of its classes.
+/// raw exit into one of its classes, and the classes the face's own refusals read as.
 ///
 /// Obtained from [`ExitTable::vendored`]; there is no other table.
 #[derive(Debug)]
 pub struct ExitTable {
     exits: BTreeMap<i32, ExitEntry>,
+    refusals: BTreeMap<String, RefusalEntry>,
     tools: BTreeMap<String, ToolMapping>,
 }
 
@@ -155,6 +185,25 @@ impl ExitTable {
         self.class_named(name)
     }
 
+    /// The class `fraise` exits with when it refuses for `which` reason.
+    ///
+    /// Infallible, because [`ExitTable::parse`] has already held the document to giving every
+    /// refusal a class the contract defines — the check is at load so that no refusal can be
+    /// discovered to have no exit at the moment it is being made.
+    ///
+    /// # Panics
+    ///
+    /// If it is reached on a table that was not parsed, which no code path allows.
+    #[must_use]
+    pub fn refusal(&self, which: Refusal) -> ExitClass<'_> {
+        let entry = self
+            .refusals
+            .get(which.key())
+            .expect("parse requires the document to name every refusal");
+        self.class_named(&entry.class)
+            .expect("parse requires every refusal's class to be one the contract defines")
+    }
+
     /// The class of that name, or `None` when the contract defines none.
     ///
     /// Crate-private, and only for a document of ours that names a class — the compatibility
@@ -173,10 +222,11 @@ impl ExitTable {
     /// Parse a contract document and refuse one whose halves disagree.
     ///
     /// Checked here rather than at the point of use, so a document that could misclassify
-    /// a dispatch cannot load at all: every class an exit or a mapping row names is one
-    /// the contract lists, no class is given to two exits (or reading a class back would
-    /// be ambiguous), every class has an exit, and no tool maps the same
-    /// `(exit, error class)` twice.
+    /// a dispatch cannot load at all: every class an exit, a mapping row or a refusal names
+    /// is one the contract lists, no class is given to two exits (or reading a class back
+    /// would be ambiguous), every class has an exit, no tool maps the same
+    /// `(exit, error class)` twice, and the refusals section speaks for exactly the refusals
+    /// the binary can make — one it does not know is as wrong as one it cannot find.
     fn parse(source: &str) -> Result<Self, String> {
         let document: Document = serde_json::from_str(source)
             .map_err(|error| format!("this is not a contract document: {error}"))?;
@@ -214,6 +264,25 @@ impl ExitTable {
             ));
         }
 
+        for (named, refusal) in &document.mappings.refusals.reasons {
+            known(&refusal.class, &format!("the {named} refusal"))?;
+            if !Refusal::ALL.iter().any(|which| which.key() == named) {
+                return Err(format!(
+                    "the document classes a {named} refusal, which this fraise does not make, so \
+                     nothing would ever read it"
+                ));
+            }
+        }
+        for which in Refusal::ALL {
+            if !document.mappings.refusals.reasons.contains_key(which.key()) {
+                return Err(format!(
+                    "the document gives no class to the {} refusal, which this fraise makes, so \
+                     that refusal would have no exit",
+                    which.key()
+                ));
+            }
+        }
+
         for (tool, mapping) in &document.mappings.tools {
             let mut seen = BTreeSet::new();
             for row in &mapping.rows {
@@ -230,6 +299,7 @@ impl ExitTable {
 
         Ok(Self {
             exits,
+            refusals: document.mappings.refusals.reasons,
             tools: document.mappings.tools,
         })
     }
@@ -262,7 +332,29 @@ struct Mappings {
     // Reason: read by a person reading the document, not by the loader.
     #[allow(dead_code)]
     note: String,
+    refusals: Refusals,
     tools: BTreeMap<String, ToolMapping>,
+}
+
+/// The section that says what the face's own refusals come to.
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Refusals {
+    // Reason: read by a person reading the document, not by the loader.
+    #[allow(dead_code)]
+    note: String,
+    reasons: BTreeMap<String, RefusalEntry>,
+}
+
+/// What one of the face's own refusals reads as. Keyed by [`Refusal::key`], so the document
+/// and the binary name the same refusals or neither loads.
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RefusalEntry {
+    class: String,
+    // Reason: why that class rather than a neighbouring one; required, so it is given.
+    #[allow(dead_code)]
+    why: String,
 }
 
 /// One tool's mapping into confiture's classes.

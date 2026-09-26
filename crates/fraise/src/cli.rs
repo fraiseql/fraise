@@ -54,6 +54,13 @@ pub struct Cli {
 /// The verbs.
 #[derive(Debug, Subcommand)]
 pub enum Command {
+    /// Read `fraise.toml`, the one file a project author writes.
+    Config {
+        /// What to do with it.
+        #[command(subcommand)]
+        what: ConfigCommand,
+    },
+
     /// Measure the tools on this machine against the compatibility table.
     Doctor,
 
@@ -84,11 +91,24 @@ pub enum Command {
     },
 }
 
+/// What `fraise config` can do with `fraise.toml`.
+#[derive(Debug, Subcommand)]
+pub enum ConfigCommand {
+    /// Read it, refuse it if it cannot be acted on, and show what it says.
+    ///
+    /// Values that came from the environment are shown as the `${VAR}` references the file
+    /// holds rather than as what they resolved to, so this is safe to paste and safe to log.
+    Show,
+}
+
 impl Command {
     /// The verb as the face spells it, which is what the envelope reports as `command`.
     #[must_use]
     pub const fn name(&self) -> &'static str {
         match self {
+            Self::Config {
+                what: ConfigCommand::Show,
+            } => "config show",
             Self::Doctor => "doctor",
             Self::Tool { .. } => "tool",
         }

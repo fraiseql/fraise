@@ -9,17 +9,21 @@ use std::process::ExitCode;
 
 use clap::{CommandFactory, Parser};
 use fraise::compatibility::CompatibilityTable;
+use fraise::config::{self, Config};
 use fraise::dispatch::{Dispatcher, Tolerance};
 use fraise::doctor;
 use fraise::envelope::{Asked, Envelope, Payload, PayloadKind};
 
-use crate::cli::{Cli, Command, PayloadMode};
+use crate::cli::{Cli, Command, ConfigCommand, PayloadMode};
 
 fn main() -> ExitCode {
     let cli = Cli::parse();
     let table = CompatibilityTable::vendored();
 
     match &cli.command {
+        Command::Config {
+            what: ConfigCommand::Show,
+        } => show_config(table, &cli),
         Command::Doctor => examine(table, &cli),
         Command::Tool {
             payload,
@@ -27,6 +31,35 @@ fn main() -> ExitCode {
             args,
         } => dispatch_tool(table, &cli, *payload, tool, args),
     }
+}
+
+/// Read `fraise.toml` and say what it holds.
+///
+/// The reading is the work: a document that cannot be acted on is refused here rather than by
+/// the first verb that needed it. What is shown is the document as written — a value that came
+/// from the environment appears as its `${VAR}` reference — so the report is the same for a
+/// person and for a machine and neither carries a secret.
+fn show_config(table: &'static CompatibilityTable, cli: &Cli) -> ExitCode {
+    let command = cli.command.name();
+    let directory = match working_directory(cli.directory.clone()) {
+        Ok(directory) => directory,
+        // A directory that cannot be resolved is not a fault of the file: nothing has been read
+        // yet, and it is the same unmet precondition a dispatch would refuse with.
+        Err(problem) => return report_problem(cli, command, table.refusal_class().exit(), problem),
+    };
+    let loaded = match Config::at(&directory).and_then(|config| config.resolve(&config::Process)) {
+        Ok(loaded) => loaded,
+        Err(problem) => {
+            return report_problem(cli, command, problem.exit(), problem.message().to_owned());
+        },
+    };
+    if cli.json {
+        let payload = loaded.payload();
+        print!("{}", Envelope::answered(command, 0, &payload).to_json());
+    } else {
+        print!("{}", loaded.render());
+    }
+    ExitCode::SUCCESS
 }
 
 /// Measure this machine against the compatibility table.
@@ -146,6 +179,19 @@ fn report_refusal(
     if cli.json {
         let payload = Payload::Text(message);
         print!("{}", Envelope::refused(command, tool, exit_code, &payload).to_json());
+    }
+    exit(exit_code)
+}
+
+/// Say why a command `fraise` answers out of its own files could not be answered: to a person on
+/// standard error always, and to a machine as the payload of the envelope that command is owed.
+///
+/// No tool is named, because none was reached — and for these commands, none would have been.
+fn report_problem(cli: &Cli, command: &str, exit_code: i32, message: String) -> ExitCode {
+    eprintln!("{message}");
+    if cli.json {
+        let payload = Payload::Text(message);
+        print!("{}", Envelope::answered(command, exit_code, &payload).to_json());
     }
     exit(exit_code)
 }

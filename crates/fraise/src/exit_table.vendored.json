@@ -121,6 +121,15 @@
   "no_ledger_error_code": "PRECON_1001",
   "mappings": {
     "note": "The face's own section, added to confiture's document rather than kept beside it: a match statement drifts in silence and a document is diffed (one-face D7). Each row says what one tool's raw process exit means in the classes above. Resolution is: the row matching (tool_exit, error_class) exactly, else the exit's error_class: null row, else the tool's `unlisted` class. Every `class` here must be one the `classes` list above names, which is what keeps this one table rather than two. Confiture is deliberately absent: the `exit_codes` map above is already its own table, so reading a confiture exit is a lookup there, not a mapping. No tool reports its error class at the process boundary today, so only the error_class: null rows are reachable until one does; the refined rows are the tool's own taxonomy, named so that adding the report is a change to the tool and not to this document.",
+    "refusals": {
+      "note": "The refusals `fraise` makes on its own account, read as classes above. A refusal is what one of this face's own failures means in confiture's taxonomy, so it is a reading of this contract and belongs beside the readings of each tool's exits. Every class named here must be one the `classes` list names, and the loader refuses a document that does not give a class to each refusal the binary can make, so a refusal with no exit cannot exist. The keys are the binary's: adding or renaming one is a change to the source and to this document together, and a key the binary does not know is refused rather than ignored.",
+      "reasons": {
+        "invalid_configuration": {
+          "class": "invalid_config",
+          "why": "A `fraise.toml` this face cannot act on is invalid configuration, which is what confiture's own meaning for this class names first. It covers a document that is not TOML, a key nothing reads, an environment naming a connection string where the name of a variable belongs, and a ${VAR} that is not set or is written in a form confiture would not expand. In every one of them the file is what has to change, not the machine and not the database, which is what tells this class from precondition_failed."
+        }
+      }
+    },
     "tools": {
       "fraiseql": {
         "source": "fraiseql crates/fraiseql-cli: output/mod.rs get_exit_codes(), enforced by runner.rs enforce_exit_code() \u2014 read 2026-09-26",

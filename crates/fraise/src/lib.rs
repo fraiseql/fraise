@@ -4,6 +4,7 @@
 //! four tools to live here, so a test can reach them without a process.
 
 pub mod compatibility;
+pub mod config;
 pub mod dispatch;
 pub mod doctor;
 pub mod envelope;
