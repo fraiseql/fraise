@@ -128,6 +128,44 @@ from the environment, and not shown here
 `fraise config sync`, which writes `confiture.yaml` and `db/environments/<env>.yaml`
 from this file with a generated-file header, is not implemented yet.
 
+## Which database a command is about
+
+Three of the four tools want a DSN and read it three ways, so `fraise` answers that question
+once, by **confiture's #152 precedence contract** rather than by a precedence of its own —
+*explicit-and-singular wins; ambiguity fails loud*. The whole ladder, rung by rung against
+the confiture step each one mirrors, is in
+[docs/how-fraise-finds-the-database.md](docs/how-fraise-finds-the-database.md).
+
+```sh
+fraise -e staging tool confiture migrate status   # the environment fraise.toml declares
+fraise --database-url-env APP_DSN tool fraiseql compile
+FRAISE_ENVIRONMENT=staging fraise config show     # the same statement, in the environment
+```
+
+The DSN is read at the moment a tool is about to run and handed to it as environment
+variables — under confiture's canonical `CONFITURE_DATABASE_URL`, the `DATABASE_URL`
+fraiseql reads, and the name `fraise.toml` itself gave it, which is what fraisier resolves
+through its own config. One DSN per invocation, under every name the stack reads it by,
+never on argv.
+
+Four rules carry the weight. A rung that answers, answers: a variable the document named and
+the machine did not set is a refusal, never a fall-through to a different database. An empty
+variable is not a source, which is confiture's own rule for this ladder. An ambient
+`DATABASE_URL` is never promoted into an intentional one, or confiture's refusal to migrate
+against an accident could never fire again. And a `FRAISE_` override names a *source*, never
+a value — there is no `FRAISE_` spelling for a setting, because the document is the one place
+a value is written.
+
+```sh
+fraise config show                        # which rung decides, and whether the variable is set
+fraise tool --mutating confiture migrate up
+```
+
+`--mutating` is the caller's to say: `fraise` did not write the tool's arguments and will not
+read its flags on its behalf. What it buys is confiture's own rule — a command that changes
+the database refuses a DSN that was merely lying around in the environment. The named verbs
+will state their own intent, because `fraise` writes their arguments.
+
 ## The exit table
 
 The four tools number their failures four ways, and only confiture's numbering is

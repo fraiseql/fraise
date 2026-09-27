@@ -194,7 +194,7 @@ const LADDER: [Rung; 6] = [
     Rung {
         name: "default_environment",
         statement: Statement::DefaultEnvironment,
-        stated_as: "project.default_environment",
+        stated_as: "a project.default_environment in fraise.toml",
         conflicts: false,
         intentional: true,
         mirrors: "confiture's step 6",
@@ -615,12 +615,12 @@ fn value(vars: &dyn Vars, name: &str) -> Option<String> {
 /// How every refusal here says what would have named a source: the ladder's own intentional
 /// rungs, so the advice cannot drift from the order that produced it.
 fn intentional_spellings() -> String {
-    LADDER
-        .iter()
-        .filter(|rung| rung.intentional)
-        .map(Rung::stated_as)
-        .collect::<Vec<&'static str>>()
-        .join(", ")
+    let spellings: Vec<&'static str> =
+        LADDER.iter().filter(|rung| rung.intentional).map(Rung::stated_as).collect();
+    match spellings.split_last() {
+        Some((last, before)) if !before.is_empty() => format!("{}, or {last}", before.join(", ")),
+        _ => spellings.join(", "),
+    }
 }
 
 /// Hold a statement that must be an environment variable's name to being one.

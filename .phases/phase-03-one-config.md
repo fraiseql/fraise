@@ -9,11 +9,11 @@ rendered from it and marked generated.
 
 - [x] `fraise.toml`: `[project]`, `[environments.<name>]` (DSN **env var name**, never a DSN),
       `[specql]`, `[fraiseql]`, `[fraisier]`, `[confiture]` passthrough tables
-- [~] strict `${VAR}` interpolation (confiture's rule) and `deny_unknown_fields` done;
-      `FRAISE_` overrides are Cycle 2's, with the reason below
+- [x] strict `${VAR}` interpolation (confiture's rule), `deny_unknown_fields`, and `FRAISE_`
+      overrides — which name a source and never a value, the judgement Cycle 2 turned on
 - [ ] `fraise config sync` writes `confiture.yaml` and `db/environments/<env>.yaml` with a
       generated-file header; confiture loads them without error (contract test runs confiture)
-- [ ] DSN precedence is confiture's ladder verbatim; ambient `DATABASE_URL` refused for
+- [x] DSN precedence is confiture's ladder verbatim; ambient `DATABASE_URL` refused for
       mutating verbs; ambiguity fails loud
 
 ## TDD Cycles
@@ -35,14 +35,23 @@ confiture accepts, not the reverse. `[refusal]` left `compatibility.toml` for th
 - **REFACTOR**: one `Config` type, one `Loaded` type after interpolation
 - **CLEANUP**: `fraise config show --json` redacts anything resolved from an env var
 
-### Cycle 2: environments, `FRAISE_` overrides and the DSN ladder
-- **RED**: table-driven test of the seven confiture rules against `fraise`'s resolver
-- **GREEN**: resolver; the env var is read at exec time and passed as `CONFITURE_DATABASE_URL`,
-  `DATABASE_URL` (for fraiseql), and fraisier's `database_url_env` name
-- **REFACTOR**: the ladder is data (a table in code), not branches
-- **CLEANUP**: docs page "how fraise finds the database" with the table
+### Cycle 2: environments, `FRAISE_` overrides and the DSN ladder — done 2026-09-27
+*Landed as 4 commits (`31aae43` RED, `a5c111b` GREEN, `84eef6e` REFACTOR, and the cleanup this
+note is part of). `dsn.rs` holds the ladder as six rungs in order, each naming the one statement
+it reads and the confiture step it mirrors; a rung is a set lookup rather than a branch, and its
+row carries its own reason, spelling and intent. 92 tests, up from 75.*
 
-`FRAISE_`-prefixed overrides belong here rather than in Cycle 1: an override is part of
+- **RED**: the fifteen-row ladder table through the binary with `env_clear`, the two refusals,
+  the handover, and the class read out of the vendored contract instead of trusted
+- **GREEN**: the resolver; the variable is read at exec time and handed over as
+  `CONFITURE_DATABASE_URL`, `DATABASE_URL` (for fraiseql) and the name `fraise.toml` gave it
+  (which is what fraisier resolves through its own config)
+- **REFACTOR**: the ladder is data; `pinned.rs` becomes the one reader of the confiture pin, and
+  `source.rs` stops counting test scaffolding as shipped code
+- **CLEANUP**: `docs/how-fraise-finds-the-database.md`, with the table, and the README section
+  that links it
+
+`FRAISE_`-prefixed overrides belonged here rather than in Cycle 1: an override is part of
 resolving a value, which is what this cycle owns, and the ladder has to say where an override
 sits in it. Cycle 1 owns the document — its shape, and the environment reaching it through
 `${VAR}`.
@@ -55,6 +64,37 @@ sits in it. Cycle 1 owns the document — its shape, and the environment reachin
 - **REFACTOR**: renderer shares templates with specql's scaffolder? No — specql's are
   replaced: `specql scaffold-app` writes `fraise.toml` and calls `fraise config sync` (Phase 04)
 - **CLEANUP**: the confiture issue for a root `--json` alias filed here, linked
+
+## Judgements taken in Cycle 2
+
+**Where "mutating" lives.** Not in a list of verb names this face cannot yet have: it is a
+property of the invocation `fraise` builds. `fraise tool` hands a tool arguments `fraise` did not
+write, and it will not read a tool's flags on its behalf, so the caller says — `--mutating`,
+exactly as `--payload` is the caller's to say. The default is a reading, which is confiture's own
+default too (`require_intentional_source=False`), so the fallback is not stricter than the tool it
+fronts for a `migrate status`. The verbs of Phase 06 state their own, because `fraise` writes
+their arguments, and the flag stays for whatever they do not wrap.
+
+**What a `FRAISE_` override may override.** A source, never a value. The two overrides are the
+environment spellings of the two flags that name a source — `FRAISE_ENVIRONMENT` and
+`FRAISE_DATABASE_URL_ENV` — and both hold a *name*. There is no `FRAISE_` spelling for a setting's
+value: the document is the one place a value is written, it is committed and diffed, and an
+override that could reach a document path would be a second document nobody can read — and would
+make `config show`, which prints the document as written, a report about something else. A value
+from the environment already has a declared way in, `${VAR}`, where a reader can see it. Both
+overrides are read by the resolver rather than by clap's `env`, so a report can say which of the
+two spellings decided, and each records itself in `from_env` under `database.environment` or
+`database.variable` — the entry Cycle 1's rule owes a reader once an override has displaced part
+of the document.
+
+**A variable the document names and the machine does not set.** Looking is not reading.
+`config show` reports that it is unset and exits 0, because whether a machine exports a DSN is a
+fact about that machine at this moment rather than about the document — the distinction Cycle 1
+already drew when it said the face's own fields are resolved against the document and not against
+the machine. The refusal belongs where the DSN is needed, so it happens at the exec, naming the
+variable and the environment that named it. And it is a refusal rather than a fall-through: a rung
+that answers, answers, which is confiture's own shape at step 6, where a config that is merely
+present is deferred to without asking whether its DSN turns out to be usable.
 
 ## Judgements taken in Cycle 1
 
@@ -96,6 +136,6 @@ compatibility table's own rows are Phase 02's and are not widened here.
 
 ## Status
 
-[~] In progress. Cycle 1 complete on `phase-03/one-config`, branched off
-`phase-02/the-binary` because `main` carries no crate yet and PR #2 is still in review.
-Cycles 2 and 3 are next; the two criteria they close are still unticked above.
+[~] In progress. Cycles 1 and 2 complete on `phase-03/one-config`, branched off
+`phase-02/the-binary` because `main` carries no crate yet and PR #2 is still in review. Cycle 3
+is next, and the criterion it closes — `config sync` — is the one still unticked above.
