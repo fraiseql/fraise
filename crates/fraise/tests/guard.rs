@@ -78,9 +78,15 @@ impl Case {
     }
 
     /// `fraise`, seeing only this case's stubs, dispatching into this case's project directory.
+    ///
+    /// The environment holds `PATH` and nothing else. A dispatch now resolves which database it is
+    /// about, and `FRAISE_ENVIRONMENT` or a DSN variable in the environment of whoever runs the
+    /// suite would decide that for it — one ambient `FRAISER_*` reddened seven unrelated tests in
+    /// fraisier-core (#64), and these cases are about versions rather than about databases.
     fn fraise(&self, args: &[&str]) -> Output {
         Command::new(env!("CARGO_BIN_EXE_fraise"))
             .args(args)
+            .env_clear()
             .env("PATH", self.bin())
             .current_dir(&self.root)
             .output()
@@ -141,6 +147,7 @@ fn a_tolerated_skew_runs_the_verb_and_says_what_it_tolerated() {
 
     let by_environment = Command::new(env!("CARGO_BIN_EXE_fraise"))
         .args(["tool", "fraiseql", "compile"])
+        .env_clear()
         .env("PATH", case.bin())
         .env("FRAISE_ALLOW_VERSION_SKEW", "1")
         .current_dir(case.project())

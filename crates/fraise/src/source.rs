@@ -14,6 +14,11 @@ use std::path::{Path, PathBuf};
 /// Every shipped source file of this crate, as its name under `src/` and the source above its
 /// tests.
 ///
+/// A module `lib.rs` declares under `#[cfg(test)]` is not one of them — it is scaffolding for the
+/// tests, not code that ships — so the claims below stay claims about the binary. Which modules
+/// those are is read out of `lib.rs` rather than listed here, so adding one does not quietly
+/// widen what a promise allows.
+///
 /// # Panics
 ///
 /// If the crate's own source cannot be read, or if it finds so few files that it would be
@@ -22,8 +27,24 @@ pub fn shipped() -> Vec<(String, String)> {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("src");
     let mut files = Vec::new();
     collect(&root, &root, &mut files);
+    let scaffolding = for_tests_only(&root);
+    files.retain(|(name, _)| !scaffolding.contains(name));
     assert!(files.len() > 4, "the scan found almost nothing, so it is measuring nothing");
     files
+}
+
+/// The files of the modules `lib.rs` declares under `#[cfg(test)]`.
+fn for_tests_only(root: &Path) -> Vec<String> {
+    let source = fs::read_to_string(root.join("lib.rs")).expect("the crate root is readable");
+    source
+        .split("#[cfg(test)]")
+        .skip(1)
+        .filter_map(|after| {
+            let declaration = after.trim_start().strip_prefix("mod ")?;
+            let name = declaration.split(';').next()?.trim();
+            Some(format!("{name}.rs"))
+        })
+        .collect()
 }
 
 fn collect(root: &Path, directory: &Path, into: &mut Vec<(String, String)>) {

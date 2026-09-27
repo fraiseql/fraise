@@ -352,10 +352,10 @@ impl Resolution {
     #[must_use]
     pub fn report(&self) -> Report<'_> {
         Report {
-            rung: self.rung.name,
-            why: self.rung.why,
-            mirrors: self.rung.mirrors,
-            intentional: self.rung.intentional,
+            rung: self.rung.name(),
+            why: self.rung.why(),
+            mirrors: self.rung.mirrors(),
+            intentional: self.rung.is_intentional(),
             environment: self.environment(),
             variable: self.variable(),
             set: self.set,
@@ -404,11 +404,17 @@ impl Resolution {
         // conventional one fraiseql reads, and the name the project's own document gave it, which
         // is the name fraisier resolves through its config. Two tools reading two databases
         // inside one command is what this prevents.
-        let mut names = vec![CANONICAL.to_owned(), AMBIENT.to_owned()];
-        names.extend(self.declared_variable.clone());
-        names.retain(|name| name != variable);
-        names.sort();
-        names.dedup();
+        let mut names: Vec<String> = Vec::new();
+        for name in [CANONICAL.to_owned(), AMBIENT.to_owned()]
+            .into_iter()
+            .chain(self.declared_variable.clone())
+        {
+            // The one already resolved is where the DSN came from, so setting it again would say
+            // nothing; a name given twice would too.
+            if name != variable && !names.contains(&name) {
+                names.push(name);
+            }
+        }
         Ok(Handover {
             variables: names.into_iter().map(|name| (name, dsn.clone())).collect(),
         })
@@ -639,4 +645,129 @@ fn variable_name(at: &str, value: &str) -> Result<String, Problem> {
          here, because a connection string in a refusal is a connection string in a log: pass the \
          name of the variable that carries the DSN, and set that variable where the command runs"
     )))
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::{BTreeMap, BTreeSet};
+
+    use super::{
+        AMBIENT, CANONICAL, Declared, Flags, LADDER, NOTHING, Resolution, Rung, Statement, resolve,
+    };
+    use crate::pinned;
+
+    /// A resolution against a stated environment and a document that declares nothing, which is
+    /// the shape the invariants below are about.
+    fn nothing_declared(vars: &[(&str, &str)]) -> Resolution {
+        let vars: BTreeMap<String, String> = vars
+            .iter()
+            .map(|(name, value)| ((*name).to_owned(), (*value).to_owned()))
+            .collect();
+        resolve(Flags::default(), Declared::NoDocument, &vars).expect("nothing is stated")
+    }
+
+    #[test]
+    fn every_rung_reads_a_statement_of_its_own() {
+        // The ladder is only data if each row answers for exactly one statement: two rows on the
+        // same one would make the order between them unreachable, and a report would name a rung
+        // that cannot be the one that decided.
+        let statements: BTreeSet<Statement> = LADDER.iter().map(|rung| rung.statement).collect();
+        assert_eq!(statements.len(), LADDER.len(), "{LADDER:#?}");
+
+        let names: BTreeSet<&str> = LADDER.iter().map(Rung::name).collect();
+        assert_eq!(names.len(), LADDER.len(), "a rung's name is what a report says: {names:?}");
+    }
+
+    #[test]
+    fn the_last_rung_is_the_one_every_invocation_reaches() {
+        // `NOTHING` is the bottom of the ladder by index, so this is what keeps the index honest
+        // if a rung is ever appended.
+        assert_eq!(NOTHING.statement, Statement::Nothing);
+        assert!(!NOTHING.intentional, "nothing is not a source anyone named");
+    }
+
+    #[test]
+    fn the_rungs_are_in_the_order_of_the_steps_they_mirror() {
+        // The ladder's claim is that it is confiture's contract, and a contract is an order. Each
+        // rung names the step it mirrors, so the order of those numbers is checkable.
+        let steps: Vec<u32> = LADDER
+            .iter()
+            .map(|rung| {
+                rung.mirrors
+                    .rsplit(' ')
+                    .next()
+                    .and_then(|step| step.parse().ok())
+                    .unwrap_or_else(|| panic!("{} names no step of the contract", rung.name))
+            })
+            .collect();
+        let mut ascending = steps.clone();
+        ascending.sort_unstable();
+        assert_eq!(steps, ascending, "the rungs run against confiture's own order: {steps:?}");
+    }
+
+    #[test]
+    fn an_empty_variable_is_not_a_source() {
+        // Confiture's resolver tests its two variables for truthiness, so an empty one is no
+        // source at all — which is not the rule `${VAR}` expansion uses, where a variable that is
+        // present expands whatever it holds. Both rules are confiture's, and each is kept where
+        // it belongs.
+        assert_eq!(nothing_declared(&[(CANONICAL, "")]).rung().name(), "nothing");
+        assert_eq!(nothing_declared(&[(AMBIENT, "")]).rung().name(), "nothing");
+        assert_eq!(nothing_declared(&[(AMBIENT, "postgresql:///x")]).rung().name(), AMBIENT_RUNG);
+    }
+
+    /// The rung an ambient variable answers on, named once so the two tests below agree.
+    const AMBIENT_RUNG: &str = "ambient_variable";
+
+    #[test]
+    fn nothing_is_handed_over_for_a_source_nobody_named() {
+        // The asymmetry #152 exists to draw: an ambient DSN is left exactly as it is. Promoting it
+        // would launder an accident into an intention and confiture's own refusal could never
+        // fire again.
+        let vars = BTreeMap::from([(AMBIENT.to_owned(), "postgresql:///x".to_owned())]);
+        let resolution = nothing_declared(&[(AMBIENT, "postgresql:///x")]);
+        let handover = resolution.handover(&vars).expect("a reading may proceed");
+        assert!(handover.names().is_empty(), "{handover:?}");
+    }
+
+    #[test]
+    fn a_handover_prints_the_names_it_sets_and_never_what_it_sets_them_to() {
+        // One `{:?}` in a log is all it would take, so the type cannot print a DSN at all.
+        let vars = BTreeMap::from([("APP_DSN".to_owned(), "postgresql://u:s3cret@h/d".to_owned())]);
+        let resolution = resolve(
+            Flags {
+                variable: Some("APP_DSN"),
+                ..Flags::default()
+            },
+            Declared::NoDocument,
+            &vars,
+        )
+        .expect("a named variable is a source");
+        let handover = resolution.handover(&vars).expect("and it is set");
+
+        let shown = format!("{handover:?}");
+        assert!(shown.contains(CANONICAL) && shown.contains(AMBIENT), "{shown}");
+        assert!(!shown.contains("s3cret"), "a DSN must not be printable: {shown}");
+        assert_eq!(handover.names(), vec![CANONICAL, AMBIENT], "under both names the stack reads");
+    }
+
+    #[test]
+    fn the_pinned_confiture_still_names_the_two_variables_this_ladder_reads() {
+        // The names in this module are a claim about another tool's interface, so they get what
+        // every claim of that kind gets here: a measurement against the pinned release that fails
+        // rather than skips. Confiture documents both in the option help its #152 contract shares
+        // across the migrate family — `--database-url` for the canonical one beating a default
+        // config, `--no-config` for the order between the two.
+        let help = pinned::output(&["migrate", "up", "--help"]);
+        let joined: String = help.chars().filter(|character| !character.is_whitespace()).collect();
+        for name in [CANONICAL, AMBIENT] {
+            assert!(
+                joined.contains(name),
+                "confiture {} no longer documents {name} in `migrate up --help`, so what this \
+                 module hands a child may no longer be what it reads.\n{}",
+                pinned::version(),
+                pinned::install_hint(&pinned::version())
+            );
+        }
+    }
 }

@@ -403,6 +403,7 @@ struct Unlisted {
 #[cfg(test)]
 mod tests {
     use super::{ExitTable, Refusal, VENDORED};
+    use crate::pinned;
 
     /// D7's mapping, written in the decision's own vocabulary — a tool's raw exit, the
     /// error class it reports when it reports one, and the **confiture exit integer** the
@@ -589,48 +590,6 @@ mod tests {
         assert!(error.contains("why"), "the refusal should name the missing field: {error}");
     }
 
-    /// The confiture release the contract is measured against, read out of
-    /// `tools/confiture-requirements.txt` so the pin has exactly one home. The test below
-    /// asserts the tool it runs reports *this* version, which couples a pin bump to a
-    /// regeneration of the document in the same commit — and makes "too old to have the
-    /// flag" a named failure instead of a silent pass.
-    fn pinned_confiture_version() -> String {
-        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .ancestors()
-            .nth(2)
-            .expect("the workspace root is two levels above crates/<name>")
-            .join("tools/confiture-requirements.txt");
-        let pins = std::fs::read_to_string(&path).unwrap_or_else(|error| {
-            panic!("reading the confiture pin {}: {error}", path.display())
-        });
-        pins.lines()
-            .find_map(|line| line.trim().strip_prefix("fraiseql-confiture=="))
-            .unwrap_or_else(|| {
-                panic!("{} names no `fraiseql-confiture==<version>`", path.display())
-            })
-            .to_owned()
-    }
-
-    /// The confiture to measure: `FRAISE_CONFITURE_BIN` when set, otherwise `confiture` on
-    /// `PATH`, which is where CI puts the pinned one.
-    fn confiture_program() -> std::ffi::OsString {
-        std::env::var_os("FRAISE_CONFITURE_BIN")
-            .filter(|value| !value.is_empty())
-            .unwrap_or_else(|| std::ffi::OsString::from("confiture"))
-    }
-
-    /// Quoted in every failure below, so a red checkout is three commands from green.
-    fn install_hint(pin: &str) -> String {
-        format!(
-            "the exit-code contract is measured against confiture {pin}. Install it:\n  \
-             uv venv --python 3.11 /tmp/confiture\n  \
-             uv pip install --python /tmp/confiture/bin/python -r \
-             tools/confiture-requirements.txt\n  \
-             PATH=/tmp/confiture/bin:$PATH cargo xtask ci\n\
-             (CI installs the same pin and puts it on PATH before the gate.)"
-        )
-    }
-
     /// The paths at which two `--exit-codes-json` documents differ, one per line, so the
     /// failure below names what drifted instead of printing two documents and leaving the
     /// reader to find it. Only a hint: the assertion compares the documents whole, so a
@@ -700,42 +659,9 @@ mod tests {
         // table stale in eight of nine entries while both its guards stayed green
         // (fraisier-core#63), and a guard that skips when the tool is absent is a guard that
         // has never run. A missing or unpinned confiture is a failure here, never a skip.
-        let pin = pinned_confiture_version();
-        let program = confiture_program();
-        let shown = program.to_string_lossy().into_owned();
-
-        let version = match std::process::Command::new(&program).arg("--version").output() {
-            Ok(output) if output.status.success() => String::from_utf8_lossy(&output.stdout)
-                .lines()
-                .next()
-                .unwrap_or_default()
-                .trim()
-                .to_owned(),
-            other => {
-                panic!("`{shown} --version` did not answer ({other:?}).\n{}", install_hint(&pin))
-            },
-        };
-        // `confiture --version` opens with `confiture version <semver>`; its later lines
-        // report the parser build and native extension, which are the machine's rather than
-        // the release's, so only the first line is the contract.
-        assert_eq!(
-            version,
-            format!("confiture version {pin}"),
-            "this is a different confiture, so any diff below would be the wrong release's.\n{}",
-            install_hint(&pin)
-        );
-
-        let output = std::process::Command::new(&program)
-            .arg("--exit-codes-json")
-            .output()
-            .unwrap_or_else(|error| panic!("running `{shown} --exit-codes-json`: {error}"));
-        assert!(
-            output.status.success(),
-            "`{shown} --exit-codes-json` exited {:?}",
-            output.status.code()
-        );
-        let live: serde_json::Value =
-            serde_json::from_slice(&output.stdout).expect("confiture emits JSON");
+        let pin = pinned::version();
+        let live: serde_json::Value = serde_json::from_str(&pinned::output(&["--exit-codes-json"]))
+            .expect("confiture emits JSON");
         assert!(
             live.get("mappings").is_none(),
             "confiture {pin} now emits a `mappings` key of its own, so the face's section can no \

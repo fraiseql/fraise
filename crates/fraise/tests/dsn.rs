@@ -81,6 +81,13 @@ impl Case {
         Self { root }
     }
 
+    /// A directory that is not a project at all, which `fraise tool` still dispatches from.
+    fn bare(name: &str) -> Self {
+        let case = Self::new(name, MINIMAL);
+        fs::remove_file(case.root.join("fraise.toml")).expect("the document is removed");
+        case
+    }
+
     /// A stub for `program` that answers `--version` with `version_line`, and on any other
     /// invocation records the DSN variables it was given, then exits 0.
     ///
@@ -588,6 +595,43 @@ fn a_variable_the_document_names_and_the_machine_does_not_set_is_refused_at_the_
         "the refusal names the variable: {stderr}"
     );
     assert!(stderr.contains("local"), "and the environment that named it: {stderr}");
+}
+
+#[test]
+fn a_directory_that_is_not_a_project_has_no_environment_to_choose() {
+    // `fraise tool` reaches a tool whether or not the directory is a project — that is what makes
+    // it the fallback this face promises — so the document being absent is not itself a refusal.
+    // Choosing an environment from a document that is not there is, and it says which file was
+    // missing rather than listing nothing.
+    let case = Case::bare("no-document");
+    case.tool("confiture", "confiture version 1.19.0");
+
+    let reached = case.fraise(&["tool", "confiture", "migrate", "status"], &[]);
+    assert!(reached.status.success(), "the fallback still dispatches: {}", shown(&reached));
+
+    let chosen = case.fraise(
+        &[
+            "--environment",
+            "local",
+            "tool",
+            "confiture",
+            "migrate",
+            "status",
+        ],
+        &[],
+    );
+    assert_eq!(
+        chosen.status.code(),
+        Some(REFUSED),
+        "there is no document to declare it: {}",
+        shown(&chosen)
+    );
+    let stderr = String::from_utf8_lossy(&chosen.stderr).into_owned();
+    assert!(stderr.contains("local"), "the refusal names what was asked for: {stderr}");
+    assert!(
+        stderr.contains("fraise.toml"),
+        "and that there is no file declaring it: {stderr}"
+    );
 }
 
 #[test]
