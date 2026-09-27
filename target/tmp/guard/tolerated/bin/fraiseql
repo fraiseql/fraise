@@ -1,0 +1,7 @@
+#!/bin/sh
+if [ "$1" = "--version" ]; then
+echo 'fraiseql 2.13.0'
+exit 0
+fi
+{ echo "cwd: $(pwd -P)"; echo "args: $*"; } >'/home/lionel/code/fraise/target/tmp/guard/tolerated/fraiseql.ran'
+exit 0

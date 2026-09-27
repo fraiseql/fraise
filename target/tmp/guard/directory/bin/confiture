@@ -1,0 +1,7 @@
+#!/bin/sh
+if [ "$1" = "--version" ]; then
+echo 'confiture version 1.19.0'
+exit 0
+fi
+{ echo "cwd: $(pwd -P)"; echo "args: $*"; } >'/home/lionel/code/fraise/target/tmp/guard/directory/confiture.ran'
+exit 0

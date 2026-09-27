@@ -1,0 +1,23 @@
+
+[project]
+nmae = "x"
+default_environment = "local"
+
+[environments.local]
+database_url_env = "PRINTOPTIM_LOCAL_DATABASE_URL"
+
+[environments.staging]
+database_url_env = "PRINTOPTIM_STAGING_DATABASE_URL"
+
+[confiture]
+migrations_dir = "db/migrations"
+notify_url = "${WEBHOOK_URL}"
+
+[fraiseql]
+schema = "public"
+
+[fraisier]
+strategy = "blue-green"
+
+[specql]
+spec = "spec/printoptim.toml"

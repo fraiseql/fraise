@@ -18,6 +18,13 @@
 //! a mapping row onto a class the contract does not define, a class given to two exits —
 //! so the guard is in force at load rather than discovered on a live dispatch.
 //!
+//! The face's own refusals are in that section too, as [`Refusal`]: a machine that does not
+//! satisfy the compatibility table and a `fraise.toml` nothing can act on are failures of
+//! `fraise` rather than of a tool, and saying what they come to is the same kind of statement as
+//! saying what fraiseql's exit 2 comes to. They are here rather than in the documents that
+//! discover them, so that one document in the tree names a class and the source names only
+//! refusals — a second place naming classes is a second taxonomy waiting to disagree.
+//!
 //! The freshness test below compares the confiture half **whole** against what the
 //! pinned confiture emits, and **fails rather than skips** when confiture is missing or
 //! is a different release. The pin is `tools/confiture-requirements.txt`, CI installs it
@@ -84,13 +91,41 @@ impl<'a> ExitClass<'a> {
     }
 }
 
+/// One refusal `fraise` makes on its own account, which the contract gives a class.
+///
+/// A refusal is named here and classed in the document, never the other way round: the
+/// variants are what the binary can refuse for, and [`ExitTable::parse`] holds the document to
+/// naming every one of them, so a refusal that could not be given an exit fails at load.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Refusal {
+    /// This machine does not satisfy the compatibility table: a tool is absent, or is at a
+    /// version nothing measured. `doctor` reports it and the version guard refuses on it.
+    Compatibility,
+    /// `fraise.toml` is not a document this face can act on.
+    Configuration,
+}
+
+impl Refusal {
+    /// Every refusal the binary can make, which is what the document must speak for.
+    const ALL: [Self; 2] = [Self::Compatibility, Self::Configuration];
+
+    /// The key this refusal has in the contract's `mappings.refusals` section.
+    const fn key(self) -> &'static str {
+        match self {
+            Self::Compatibility => "compatibility_unsatisfied",
+            Self::Configuration => "invalid_configuration",
+        }
+    }
+}
+
 /// Confiture's exit-code contract, with the per-tool mapping that turns another tool's
-/// raw exit into one of its classes.
+/// raw exit into one of its classes, and the classes the face's own refusals read as.
 ///
 /// Obtained from [`ExitTable::vendored`]; there is no other table.
 #[derive(Debug)]
 pub struct ExitTable {
     exits: BTreeMap<i32, ExitEntry>,
+    refusals: BTreeMap<String, RefusalEntry>,
     tools: BTreeMap<String, ToolMapping>,
 }
 
@@ -155,13 +190,32 @@ impl ExitTable {
         self.class_named(name)
     }
 
+    /// The class `fraise` exits with when it refuses for `which` reason.
+    ///
+    /// Infallible, because [`ExitTable::parse`] has already held the document to giving every
+    /// refusal a class the contract defines — the check is at load so that no refusal can be
+    /// discovered to have no exit at the moment it is being made.
+    ///
+    /// # Panics
+    ///
+    /// If it is reached on a table that was not parsed, which no code path allows.
+    #[must_use]
+    pub fn refusal(&self, which: Refusal) -> ExitClass<'_> {
+        let entry = self
+            .refusals
+            .get(which.key())
+            .expect("parse requires the document to name every refusal");
+        self.class_named(&entry.class)
+            .expect("parse requires every refusal's class to be one the contract defines")
+    }
+
     /// The class of that name, or `None` when the contract defines none.
     ///
-    /// Crate-private, and only for a document of ours that names a class — the compatibility
-    /// table names the class it refuses with, and resolving it here is what keeps the
-    /// umbrella's one exit taxonomy in this contract. A caller outside holds an [`ExitClass`]
-    /// rather than a name.
-    pub(crate) fn class_named(&self, name: &str) -> Option<ExitClass<'_>> {
+    /// Private: a name is how this document refers to a class, and nothing outside gets to
+    /// hold one. Every caller reaches a class through what it is asking about — a confiture
+    /// exit, a tool's exit, or one of the face's own refusals — so there is no path by which a
+    /// class name could be written in the source and resolved here.
+    fn class_named(&self, name: &str) -> Option<ExitClass<'_>> {
         let (exit, entry) = self.exits.iter().find(|(_, entry)| entry.class == name)?;
         Some(ExitClass {
             name: &entry.class,
@@ -173,10 +227,11 @@ impl ExitTable {
     /// Parse a contract document and refuse one whose halves disagree.
     ///
     /// Checked here rather than at the point of use, so a document that could misclassify
-    /// a dispatch cannot load at all: every class an exit or a mapping row names is one
-    /// the contract lists, no class is given to two exits (or reading a class back would
-    /// be ambiguous), every class has an exit, and no tool maps the same
-    /// `(exit, error class)` twice.
+    /// a dispatch cannot load at all: every class an exit, a mapping row or a refusal names
+    /// is one the contract lists, no class is given to two exits (or reading a class back
+    /// would be ambiguous), every class has an exit, no tool maps the same
+    /// `(exit, error class)` twice, and the refusals section speaks for exactly the refusals
+    /// the binary can make — one it does not know is as wrong as one it cannot find.
     fn parse(source: &str) -> Result<Self, String> {
         let document: Document = serde_json::from_str(source)
             .map_err(|error| format!("this is not a contract document: {error}"))?;
@@ -214,6 +269,25 @@ impl ExitTable {
             ));
         }
 
+        for (named, refusal) in &document.mappings.refusals.reasons {
+            known(&refusal.class, &format!("the {named} refusal"))?;
+            if !Refusal::ALL.iter().any(|which| which.key() == named) {
+                return Err(format!(
+                    "the document classes a {named} refusal, which this fraise does not make, so \
+                     nothing would ever read it"
+                ));
+            }
+        }
+        for which in Refusal::ALL {
+            if !document.mappings.refusals.reasons.contains_key(which.key()) {
+                return Err(format!(
+                    "the document gives no class to the {} refusal, which this fraise makes, so \
+                     that refusal would have no exit",
+                    which.key()
+                ));
+            }
+        }
+
         for (tool, mapping) in &document.mappings.tools {
             let mut seen = BTreeSet::new();
             for row in &mapping.rows {
@@ -230,6 +304,7 @@ impl ExitTable {
 
         Ok(Self {
             exits,
+            refusals: document.mappings.refusals.reasons,
             tools: document.mappings.tools,
         })
     }
@@ -262,7 +337,29 @@ struct Mappings {
     // Reason: read by a person reading the document, not by the loader.
     #[allow(dead_code)]
     note: String,
+    refusals: Refusals,
     tools: BTreeMap<String, ToolMapping>,
+}
+
+/// The section that says what the face's own refusals come to.
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Refusals {
+    // Reason: read by a person reading the document, not by the loader.
+    #[allow(dead_code)]
+    note: String,
+    reasons: BTreeMap<String, RefusalEntry>,
+}
+
+/// What one of the face's own refusals reads as. Keyed by [`Refusal::key`], so the document
+/// and the binary name the same refusals or neither loads.
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RefusalEntry {
+    class: String,
+    // Reason: why that class rather than a neighbouring one; required, so it is given.
+    #[allow(dead_code)]
+    why: String,
 }
 
 /// One tool's mapping into confiture's classes.
@@ -305,7 +402,8 @@ struct Unlisted {
 
 #[cfg(test)]
 mod tests {
-    use super::{ExitTable, VENDORED};
+    use super::{ExitTable, Refusal, VENDORED};
+    use crate::pinned;
 
     /// D7's mapping, written in the decision's own vocabulary — a tool's raw exit, the
     /// error class it reports when it reports one, and the **confiture exit integer** the
@@ -411,6 +509,77 @@ mod tests {
     }
 
     #[test]
+    fn a_refusal_classed_as_something_the_contract_does_not_define_is_refused() {
+        let source = doctored(|document| {
+            document["mappings"]["refusals"]["reasons"]["invalid_configuration"]["class"] =
+                serde_json::Value::from("catastrophe");
+        });
+        let error = ExitTable::parse(&source).expect_err("the class is not in the contract");
+        assert!(
+            error.contains("catastrophe") && error.contains("classes"),
+            "the refusal should name the class and where it should have been listed: {error}"
+        );
+    }
+
+    #[test]
+    fn a_refusal_the_binary_makes_and_the_document_does_not_class_is_refused() {
+        // The failure this prevents is a refusal with no exit, discovered at the moment it is
+        // being made — which is the moment a caller has the least to go on.
+        let source = doctored(|document| {
+            document["mappings"]["refusals"]["reasons"]
+                .as_object_mut()
+                .expect("the reasons are an object")
+                .remove("invalid_configuration");
+        });
+        let error = ExitTable::parse(&source).expect_err("a refusal has no class");
+        assert!(
+            error.contains("invalid_configuration"),
+            "the refusal should name the one that would have no exit: {error}"
+        );
+    }
+
+    #[test]
+    fn a_refusal_the_binary_does_not_make_is_refused_rather_than_ignored() {
+        // The other direction, and the reason the keys are the binary's: a classed refusal
+        // nothing reads is a decision recorded where a reader would take it for one in force.
+        let source = doctored(|document| {
+            // Classed as something the contract does define, so what is refused is the key and
+            // not the class — and taken from the document, so this test names no class either.
+            let classed =
+                document["mappings"]["refusals"]["reasons"]["invalid_configuration"]["class"]
+                    .clone();
+            document["mappings"]["refusals"]["reasons"]["spilled_the_jam"] = serde_json::json!({
+                "class": classed,
+                "why": "a refusal this fraise has never heard of",
+            });
+        });
+        let error = ExitTable::parse(&source).expect_err("the binary makes no such refusal");
+        assert!(
+            error.contains("spilled_the_jam"),
+            "the refusal should name the key nothing reads: {error}"
+        );
+    }
+
+    #[test]
+    fn every_refusal_the_binary_makes_reads_as_a_class_of_the_contract() {
+        // What the accessor promises, said for each variant rather than for the one a test
+        // happened to reach: `refusal` is infallible because `parse` has already been through
+        // this list.
+        let table = ExitTable::vendored();
+        for which in Refusal::ALL {
+            let class = table.refusal(which);
+            assert_eq!(
+                table.class_of_exit(class.exit()),
+                Some(class),
+                "{which:?} reads as {} which is not the class of exit {}",
+                class.name(),
+                class.exit()
+            );
+            assert_ne!(class.exit(), 0, "{which:?} is a refusal, not a success");
+        }
+    }
+
+    #[test]
     fn a_row_without_its_reason_is_refused() {
         // `why` is required so that no exit acquires a reading nobody had to justify.
         let source = doctored(|document| {
@@ -419,48 +588,6 @@ mod tests {
         });
         let error = ExitTable::parse(&source).expect_err("the row gives no reason");
         assert!(error.contains("why"), "the refusal should name the missing field: {error}");
-    }
-
-    /// The confiture release the contract is measured against, read out of
-    /// `tools/confiture-requirements.txt` so the pin has exactly one home. The test below
-    /// asserts the tool it runs reports *this* version, which couples a pin bump to a
-    /// regeneration of the document in the same commit — and makes "too old to have the
-    /// flag" a named failure instead of a silent pass.
-    fn pinned_confiture_version() -> String {
-        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .ancestors()
-            .nth(2)
-            .expect("the workspace root is two levels above crates/<name>")
-            .join("tools/confiture-requirements.txt");
-        let pins = std::fs::read_to_string(&path).unwrap_or_else(|error| {
-            panic!("reading the confiture pin {}: {error}", path.display())
-        });
-        pins.lines()
-            .find_map(|line| line.trim().strip_prefix("fraiseql-confiture=="))
-            .unwrap_or_else(|| {
-                panic!("{} names no `fraiseql-confiture==<version>`", path.display())
-            })
-            .to_owned()
-    }
-
-    /// The confiture to measure: `FRAISE_CONFITURE_BIN` when set, otherwise `confiture` on
-    /// `PATH`, which is where CI puts the pinned one.
-    fn confiture_program() -> std::ffi::OsString {
-        std::env::var_os("FRAISE_CONFITURE_BIN")
-            .filter(|value| !value.is_empty())
-            .unwrap_or_else(|| std::ffi::OsString::from("confiture"))
-    }
-
-    /// Quoted in every failure below, so a red checkout is three commands from green.
-    fn install_hint(pin: &str) -> String {
-        format!(
-            "the exit-code contract is measured against confiture {pin}. Install it:\n  \
-             uv venv --python 3.11 /tmp/confiture\n  \
-             uv pip install --python /tmp/confiture/bin/python -r \
-             tools/confiture-requirements.txt\n  \
-             PATH=/tmp/confiture/bin:$PATH cargo xtask ci\n\
-             (CI installs the same pin and puts it on PATH before the gate.)"
-        )
     }
 
     /// The paths at which two `--exit-codes-json` documents differ, one per line, so the
@@ -532,42 +659,9 @@ mod tests {
         // table stale in eight of nine entries while both its guards stayed green
         // (fraisier-core#63), and a guard that skips when the tool is absent is a guard that
         // has never run. A missing or unpinned confiture is a failure here, never a skip.
-        let pin = pinned_confiture_version();
-        let program = confiture_program();
-        let shown = program.to_string_lossy().into_owned();
-
-        let version = match std::process::Command::new(&program).arg("--version").output() {
-            Ok(output) if output.status.success() => String::from_utf8_lossy(&output.stdout)
-                .lines()
-                .next()
-                .unwrap_or_default()
-                .trim()
-                .to_owned(),
-            other => {
-                panic!("`{shown} --version` did not answer ({other:?}).\n{}", install_hint(&pin))
-            },
-        };
-        // `confiture --version` opens with `confiture version <semver>`; its later lines
-        // report the parser build and native extension, which are the machine's rather than
-        // the release's, so only the first line is the contract.
-        assert_eq!(
-            version,
-            format!("confiture version {pin}"),
-            "this is a different confiture, so any diff below would be the wrong release's.\n{}",
-            install_hint(&pin)
-        );
-
-        let output = std::process::Command::new(&program)
-            .arg("--exit-codes-json")
-            .output()
-            .unwrap_or_else(|error| panic!("running `{shown} --exit-codes-json`: {error}"));
-        assert!(
-            output.status.success(),
-            "`{shown} --exit-codes-json` exited {:?}",
-            output.status.code()
-        );
-        let live: serde_json::Value =
-            serde_json::from_slice(&output.stdout).expect("confiture emits JSON");
+        let pin = pinned::version();
+        let live: serde_json::Value = serde_json::from_str(&pinned::output(&["--exit-codes-json"]))
+            .expect("confiture emits JSON");
         assert!(
             live.get("mappings").is_none(),
             "confiture {pin} now emits a `mappings` key of its own, so the face's section can no \

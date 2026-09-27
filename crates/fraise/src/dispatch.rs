@@ -29,6 +29,7 @@ use std::process::{Command, ExitStatus, Stdio};
 use serde::Serialize;
 
 use crate::compatibility::{CompatibilityTable, Tool, Verdict};
+use crate::dsn::Handover;
 use crate::envelope::{Asked, Payload};
 use crate::exit_table::{ExitClass, ExitTable};
 use crate::tool_version::{self, Reading};
@@ -110,7 +111,11 @@ impl<'a> Dispatcher<'a> {
         }
     }
 
-    /// Run the verb. The only way to hold a [`Cleared`] is to have passed the guard.
+    /// Run the verb, against the database `handover` names. The only way to hold a [`Cleared`]
+    /// is to have passed the guard, and the only way to run one is to have resolved that
+    /// question: which database a command is about is [`crate::dsn`]'s answer, and it reaches
+    /// the child as environment variables — never as arguments, where every process on the
+    /// machine could read the DSN.
     ///
     /// What was [`Asked`] for decides how the child's streams are wired. Asked for nothing,
     /// the child writes to `fraise`'s own, so a tool that streams progress to a terminal
@@ -128,9 +133,10 @@ impl<'a> Dispatcher<'a> {
         cleared: Cleared<'a>,
         args: &[S],
         asked: Asked,
+        handover: &Handover,
     ) -> io::Result<Outcome<'a>> {
         let mut command = Command::new(cleared.row.program());
-        command.args(args).current_dir(&self.directory);
+        command.args(args).current_dir(&self.directory).envs(handover.variables());
         let (status, output) = match asked {
             Asked::Nothing => (command.status()?, Vec::new()),
             Asked::Text | Asked::Json => {

@@ -1,0 +1,2 @@
+#!/bin/sh
+echo 'a wrapper script that forgot to say which fraisier'

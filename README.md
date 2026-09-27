@@ -11,13 +11,13 @@ exit table instead of four of each.
 ## Status
 
 Alpha, and honest about it: `fraise --version`, the exit table, `fraise doctor`,
-the version-guarded `fraise tool` and the `--json` envelope are what exist
-today. None of the named verbs are implemented and the crate is not published.
-What is being built, in order:
+the version-guarded `fraise tool`, the `--json` envelope and `fraise config show`
+are what exist today. None of the named verbs are implemented and the crate is
+not published. What is being built, in order:
 
 | | |
 |---|---|
-| `fraise.toml` | the one file a project author writes; `fraise config sync` renders confiture's YAMLs from it, and `--check` fails on drift |
+| `fraise config sync` | rendering confiture's YAMLs from `fraise.toml`, with `--check` failing on drift. The file itself is read and shown today |
 | the verbs | `init check build migrate deploy status up`, each documented as the exact tool invocation it performs, so falling back to the tool is always possible |
 
 ## Install
@@ -49,6 +49,122 @@ a binary at the glibc of whatever built it, which is how fraisier's beta.4 tarba
 to be a release that would not load on Debian 12. One target is built today; the rest
 arrive with the first published alpha. `tools/package.sh` builds one, and is told
 everything it needs: which build, which target, which version, where to leave it.
+
+## The one config file
+
+`fraise.toml` is the file a project author writes, and the only one: `fraise` renders
+what each tool expects from it. It has a `[project]` table, an `[environments.<name>]`
+table per database, and one passthrough table per tool — the four the compatibility
+table speaks for, and no others.
+
+```toml
+[project]
+name = "printoptim"
+default_environment = "local"
+
+[environments.local]
+database_url_env = "PRINTOPTIM_LOCAL_DATABASE_URL"
+
+[confiture]
+migrations_dir = "db/migrations"
+notify_url = "${OPS_WEBHOOK_URL}"
+
+[fraiseql]
+schema = "public"
+```
+
+**An environment names the variable that carries its DSN, never the DSN.**
+`database_url_env` must be an environment variable's name — `[A-Z_][A-Z0-9_]*` — and a
+connection string there is refused. `fraise.toml` is committed; the DSN is not, and
+`fraise` reads the variable at the moment it runs a tool. The refusal names the key and
+does not quote the value, because a refusal that printed the DSN would put it in the log
+the rule exists to keep it out of.
+
+**A key nothing reads is refused, not ignored.** A tolerated one is a setting that
+silently does nothing, and for a file that configures four tools that means a migration
+run against something nobody asked for.
+
+**`${VAR}` is confiture's rule, not one of ours**, because `fraise` renders confiture's
+YAML: strict `[A-Z_][A-Z0-9_]*`, single pass, and a missing variable refused rather than
+expanded to nothing. `${lower}`, `${VAR:-default}`, `${}` and an unclosed `${` are all
+refused, each naming the setting it is in. The comparison against the pinned confiture,
+row by row including the one row where the two deliberately differ, is the table in the
+module documentation of `crates/fraise/src/interpolation.rs`. The passthrough tables are
+where a value may come from the environment; the fields `fraise` reads itself — a
+project's name, the environment to default to, the name of a variable — are read as
+written and refuse a `${…}`. So no string in a loaded document keeps an unexpanded
+reference.
+
+Anything the file says that `fraise` cannot act on exits with `invalid_config`, the
+class the exit contract gives this face's `invalid_configuration` refusal.
+
+```sh
+fraise config show          # what the file says, for a person
+fraise config show --json   # the same, as the envelope's payload
+```
+
+What `show` prints is the document **as written**. A value that came from the
+environment appears as the `${VAR}` reference the file holds, and a `from_env` map says
+which variable fed which setting — which is what an agent needs in order to act, and is
+not the secret. There is no masking rule to get wrong: a resolved value is never
+rendered at all, and the type the report is made from cannot reach one.
+
+```
+printoptim — /home/you/printoptim/fraise.toml
+default environment: local
+
+environments
+  local    PRINTOPTIM_LOCAL_DATABASE_URL
+  staging  PRINTOPTIM_STAGING_DATABASE_URL
+
+[confiture]
+  migrations_dir  db/migrations
+  notify_url      ${OPS_WEBHOOK_URL}
+
+from the environment, and not shown here
+  confiture.notify_url  OPS_WEBHOOK_URL
+```
+
+`fraise config sync`, which writes `confiture.yaml` and `db/environments/<env>.yaml`
+from this file with a generated-file header, is not implemented yet.
+
+## Which database a command is about
+
+Three of the four tools want a DSN and read it three ways, so `fraise` answers that question
+once, by **confiture's #152 precedence contract** rather than by a precedence of its own —
+*explicit-and-singular wins; ambiguity fails loud*. The whole ladder, rung by rung against
+the confiture step each one mirrors, is in
+[docs/how-fraise-finds-the-database.md](docs/how-fraise-finds-the-database.md).
+
+```sh
+fraise -e staging tool confiture migrate status   # the environment fraise.toml declares
+fraise --database-url-env APP_DSN tool fraiseql compile
+FRAISE_ENVIRONMENT=staging fraise config show     # the same statement, in the environment
+```
+
+The DSN is read at the moment a tool is about to run and handed to it as environment
+variables — under confiture's canonical `CONFITURE_DATABASE_URL`, the `DATABASE_URL`
+fraiseql reads, and the name `fraise.toml` itself gave it, which is what fraisier resolves
+through its own config. One DSN per invocation, under every name the stack reads it by,
+never on argv.
+
+Four rules carry the weight. A rung that answers, answers: a variable the document named and
+the machine did not set is a refusal, never a fall-through to a different database. An empty
+variable is not a source, which is confiture's own rule for this ladder. An ambient
+`DATABASE_URL` is never promoted into an intentional one, or confiture's refusal to migrate
+against an accident could never fire again. And a `FRAISE_` override names a *source*, never
+a value — there is no `FRAISE_` spelling for a setting, because the document is the one place
+a value is written.
+
+```sh
+fraise config show                        # which rung decides, and whether the variable is set
+fraise tool --mutating confiture migrate up
+```
+
+`--mutating` is the caller's to say: `fraise` did not write the tool's arguments and will not
+read its flags on its behalf. What it buys is confiture's own rule — a command that changes
+the database refuses a DSN that was merely lying around in the environment. The named verbs
+will state their own intent, because `fraise` writes their arguments.
 
 ## The exit table
 
@@ -84,8 +200,9 @@ Six verdicts, of which two satisfy the table. A version outside it, a tool that 
 not installed, a version that cannot be read, and a build of a tool that has no
 release at all are four different facts, and the report keeps them apart because a
 reader acts differently on each. Anything unsatisfied exits with
-`precondition_failed` — the class the table names and the exit contract defines,
-which is the same refusal the version guard will use at a tool boundary.
+`precondition_failed` — the class the exit contract gives this face's
+`compatibility_unsatisfied` refusal, which is the same refusal the version guard uses
+at a tool boundary.
 
 Ranges are cargo semver, so a locally built `2.14.2-dev.<sha>` reads as outside the
 table rather than as its release: a development build is a version nobody measured,
@@ -215,7 +332,10 @@ releases.
 ## Design rules
 
 - A DSN is never printed and never passed on argv; secrets reach the tools as
-  environment variables only.
+  environment variables only, and `fraise.toml` names the variable that carries one
+  rather than holding the string.
+- A key nothing reads is refused rather than ignored, in every document this face
+  owns: a tolerated one is a setting that silently does nothing.
 - Every version that crosses a tool boundary is checked before the call, and an
   unexplained skew is refused rather than tolerated silently.
 - Text that looks like JSON is not parsed as JSON.

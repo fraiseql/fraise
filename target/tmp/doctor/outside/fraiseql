@@ -1,0 +1,2 @@
+#!/bin/sh
+echo 'fraiseql 2.13.0'

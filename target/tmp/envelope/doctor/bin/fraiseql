@@ -1,0 +1,8 @@
+#!/bin/sh
+if [ "$1" = "--version" ]; then
+echo 'fraiseql 2.14.1'
+exit 0
+fi
+echo "args: $*" >'/home/lionel/code/fraise/target/tmp/envelope/doctor/fraiseql.ran'
+echo ''
+exit 0
