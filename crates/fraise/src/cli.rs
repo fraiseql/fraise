@@ -32,6 +32,27 @@ pub struct Cli {
     #[arg(long, short = 'C', global = true, value_name = "PATH")]
     pub directory: Option<PathBuf>,
 
+    /// The environment of `fraise.toml` this command is about.
+    ///
+    /// Defaulted by the document rather than by the flag — `project.default_environment` — so
+    /// "the caller chose one" is simply this being given, and no parameter-source machinery is
+    /// needed to tell a choice from a default. Confiture needs that machinery because its
+    /// `--config` defaults to a *present file*; here the default lives in the document, where a
+    /// reader can see it.
+    ///
+    /// The environment spelling of this flag, `FRAISE_ENVIRONMENT`, is read by the resolver
+    /// rather than by the parser, so that a report can say which of the two decided.
+    #[arg(long, short = 'e', global = true, value_name = "NAME")]
+    pub environment: Option<String>,
+
+    /// The environment variable that carries this command's DSN, whatever the document says.
+    ///
+    /// A *name*, never a connection string: argv is readable by every process on the machine,
+    /// which is why this face has no `--database-url` for confiture's own flag to map onto. Its
+    /// environment spelling is `FRAISE_DATABASE_URL_ENV`.
+    #[arg(long, global = true, value_name = "NAME")]
+    pub database_url_env: Option<String>,
+
     /// Run a tool whose version the compatibility table does not allow, reporting the skew.
     ///
     /// The environment variable takes the spellings a script reaches for — `1`, `yes`, `on`,
@@ -69,6 +90,16 @@ pub enum Command {
     /// The fallback the face promises: whatever the verbs do not cover yet, the tool itself
     /// can still be reached, with the version checked and the exit mapped.
     Tool {
+        /// Whether the arguments being handed to the tool change the database.
+        ///
+        /// `fraise` cannot know: it did not write them, and it will not read a tool's flags on
+        /// its behalf. So the caller says, exactly as it says what a payload is — and what the
+        /// answer buys is confiture's own rule for a mutating command, which refuses to run
+        /// against a DSN that was merely lying around in the environment. When the verbs arrive
+        /// each one states its own, because `fraise` writes their arguments.
+        #[arg(long)]
+        mutating: bool,
+
         /// What the tool's standard output is, when `--json` makes an envelope of it.
         ///
         /// `fraise` never decides this by looking at the output: text that looks like JSON

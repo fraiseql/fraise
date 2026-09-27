@@ -35,6 +35,7 @@ use std::{fs, io};
 
 use serde::{Deserialize, Serialize};
 
+use crate::dsn::{Declared, Report, Resolution};
 use crate::envelope::Payload;
 use crate::exit_table::{ExitTable, Refusal};
 use crate::interpolation::{self, Vars};
@@ -57,7 +58,12 @@ pub struct Problem {
 }
 
 impl Problem {
-    const fn new(message: String) -> Self {
+    /// A refusal about the configuration in hand.
+    ///
+    /// Reachable from [`crate::dsn`] as well as from here: which database a command is about is
+    /// part of its configuration, and confiture — whose ladder that module is — classes its own
+    /// refusals about it the same way.
+    pub(crate) const fn new(message: String) -> Self {
         Self { message }
     }
 
@@ -101,16 +107,47 @@ impl Config {
     ///
     /// If there is no such file, or it is not a document this face can act on.
     pub fn at(directory: &Path) -> Result<Self, Problem> {
-        let path = directory.join(FILE);
-        match fs::read_to_string(&path) {
-            Ok(source) => Self::read(&source, path),
-            Err(error) if error.kind() == io::ErrorKind::NotFound => Err(Problem::new(format!(
+        Self::find(directory)?.ok_or_else(|| {
+            Problem::new(format!(
                 "there is no {FILE} in {}, so there is no project here to read",
                 directory.display()
-            ))),
+            ))
+        })
+    }
+
+    /// Read the `fraise.toml` of the project in `directory`, or `None` when there is no project
+    /// there.
+    ///
+    /// The distinction a dispatch needs: `fraise tool` reaches a tool whether or not the
+    /// directory is a project — that is what makes it the fallback this face promises — but a
+    /// document that *is* there is read, and read whole, because a command about to touch a
+    /// database must not be the one that ignored the file saying which database.
+    ///
+    /// # Errors
+    ///
+    /// If there is a document and it is not one this face can act on.
+    pub fn find(directory: &Path) -> Result<Option<Self>, Problem> {
+        let path = directory.join(FILE);
+        match fs::read_to_string(&path) {
+            Ok(source) => Self::read(&source, path).map(Some),
+            Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(None),
             Err(error) => {
                 Err(Problem::new(format!("{FILE} cannot be read: {}: {error}", path.display())))
             },
+        }
+    }
+
+    /// What this document declares about environments, for the ladder that decides which
+    /// database a command is about.
+    ///
+    /// Handing these out is not handing out a value: the fields in them are the ones this face
+    /// reads itself, held at load to being written rather than referenced, and
+    /// `database_url_env` to being a variable's *name*.
+    #[must_use]
+    pub fn declared(&self) -> Declared<'_> {
+        Declared::Document {
+            default: self.project.default_environment(),
+            environments: &self.environments,
         }
     }
 
@@ -254,16 +291,35 @@ impl Loaded {
         self.settings.get(tool)
     }
 
-    /// The document as a reader may see it: as written, plus which variables fed which
-    /// setting.
+    /// What this document declares about environments.
     #[must_use]
-    pub fn view(&self) -> View<'_> {
+    pub fn declared(&self) -> Declared<'_> {
+        Declared::Document {
+            default: self.project.default_environment(),
+            environments: &self.environments,
+        }
+    }
+
+    /// The document as a reader may see it: as written, plus which variables fed which setting,
+    /// plus which database the invocation being reported is about.
+    ///
+    /// `database`'s own `from_env` entries are merged into this document's, because an override
+    /// that displaced part of the document is a value from the environment like any other — and
+    /// a report that showed the document as written without saying so would be a report about a
+    /// configuration nobody is running.
+    #[must_use]
+    pub fn view<'a>(&'a self, database: &'a Resolution) -> View<'a> {
+        let mut from_env = self.from_env.clone();
+        for (path, variables) in database.from_env() {
+            from_env.insert(path.clone(), variables.clone());
+        }
         View {
             path: &self.path,
             project: &self.project,
             environments: &self.environments,
             tools: &self.written,
-            from_env: &self.from_env,
+            database: database.report(),
+            from_env,
         }
     }
 
@@ -274,13 +330,13 @@ impl Loaded {
     /// If the view cannot be serialised, which is a bug in this module rather than a state a
     /// machine can be in.
     #[must_use]
-    pub fn payload(&self) -> Payload {
-        Payload::Json(serde_json::to_value(self.view()).expect("a view serialises"))
+    pub fn payload(&self, database: &Resolution) -> Payload {
+        Payload::Json(serde_json::to_value(self.view(database)).expect("a view serialises"))
     }
 
     /// The view as a person reads it.
     #[must_use]
-    pub fn render(&self) -> String {
+    pub fn render(&self, database: &Resolution) -> String {
         let mut text = String::new();
         let _ = writeln!(text, "{} — {}", self.project.name, self.path.display());
         if let Some(default) = &self.project.default_environment {
@@ -304,10 +360,25 @@ impl Loaded {
             }
         }
 
-        if !self.from_env.is_empty() {
+        let rung = database.rung();
+        text.push_str("\ndatabase\n");
+        let _ = writeln!(text, "  rung         {}, which mirrors {}", rung.name(), rung.mirrors());
+        if let Some(environment) = database.environment() {
+            let _ = writeln!(text, "  environment  {environment}");
+        }
+        if let Some(variable) = database.variable() {
+            let set = if database.is_set() { "set" } else { "not set" };
+            let _ = writeln!(text, "  variable     {variable} ({set})");
+        }
+
+        let mut from_env = self.from_env.clone();
+        for (path, variables) in database.from_env() {
+            from_env.insert(path.clone(), variables.clone());
+        }
+        if !from_env.is_empty() {
             text.push_str("\nfrom the environment, and not shown here\n");
-            let width = widest(self.from_env.keys().map(String::as_str));
-            for (path, variables) in &self.from_env {
+            let width = widest(from_env.keys().map(String::as_str));
+            for (path, variables) in &from_env {
                 let _ = writeln!(text, "  {path:width$}  {}", variables.join(", "));
             }
         }
@@ -326,7 +397,8 @@ pub struct View<'a> {
     project: &'a Project,
     environments: &'a BTreeMap<String, Environment>,
     tools: &'a BTreeMap<String, toml::Table>,
-    from_env: &'a BTreeMap<String, Vec<String>>,
+    database: Report<'a>,
+    from_env: BTreeMap<String, Vec<String>>,
 }
 
 /// `[project]`.
@@ -548,6 +620,14 @@ mod tests {
 
     use super::{Config, Loaded};
     use crate::compatibility::{CompatibilityTable, Tool};
+    use crate::dsn::{self, Flags, Resolution};
+
+    /// The resolution a document's own report is made against: no flags, and an environment
+    /// holding nothing, so what these tests assert is the document and never the machine.
+    fn about(loaded: &Loaded) -> Resolution {
+        dsn::resolve(Flags::default(), loaded.declared(), &BTreeMap::new())
+            .expect("a document with no environments states nothing about a database")
+    }
 
     /// A document, read and resolved against a stated environment.
     fn load(source: &str, vars: &[(&str, &str)]) -> Result<Loaded, String> {
@@ -608,7 +688,7 @@ mod tests {
             "the settings a tool is handed are the resolved ones"
         );
         assert_eq!(
-            loaded.view().tools["confiture"]["url"].as_str(),
+            loaded.view(&about(&loaded)).tools["confiture"]["url"].as_str(),
             Some("${HOOK}"),
             "and what a reader is shown is the reference"
         );

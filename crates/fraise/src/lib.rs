@@ -7,6 +7,7 @@ pub mod compatibility;
 pub mod config;
 pub mod dispatch;
 pub mod doctor;
+pub mod dsn;
 pub mod envelope;
 pub mod exit_table;
 pub mod interpolation;

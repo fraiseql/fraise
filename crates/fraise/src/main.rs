@@ -4,14 +4,15 @@
 
 mod cli;
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 use clap::{CommandFactory, Parser};
 use fraise::compatibility::CompatibilityTable;
-use fraise::config::Config;
+use fraise::config::{Config, Problem};
 use fraise::dispatch::{Dispatcher, Tolerance};
 use fraise::doctor;
+use fraise::dsn::{self, Declared, Flags, Handover};
 use fraise::envelope::{Asked, Envelope, Payload, PayloadKind};
 use fraise::interpolation::Process;
 
@@ -27,10 +28,11 @@ fn main() -> ExitCode {
         } => show_config(table, &cli),
         Command::Doctor => examine(table, &cli),
         Command::Tool {
+            mutating,
             payload,
             tool,
             args,
-        } => dispatch_tool(table, &cli, *payload, tool, args),
+        } => dispatch_tool(table, &cli, *mutating, *payload, tool, args),
     }
 }
 
@@ -54,11 +56,22 @@ fn show_config(table: &'static CompatibilityTable, cli: &Cli) -> ExitCode {
             return report_problem(cli, command, problem.exit(), problem.message().to_owned());
         },
     };
+    // Which database the document says a command would be about, reported rather than acted on:
+    // nothing here runs a tool, so no DSN is read. A variable the document names and the machine
+    // does not set is a fact the report carries, not a refusal — that one belongs where the DSN
+    // is needed. An ambiguity is refused, because an invocation nobody could resolve is not a
+    // document anyone can act on.
+    let database = match dsn::resolve(flags(cli, false), loaded.declared(), &Process) {
+        Ok(database) => database,
+        Err(problem) => {
+            return report_problem(cli, command, problem.exit(), problem.message().to_owned());
+        },
+    };
     if cli.json {
-        let payload = loaded.payload();
+        let payload = loaded.payload(&database);
         print!("{}", Envelope::answered(command, 0, &payload).to_json());
     } else {
-        print!("{}", loaded.render());
+        print!("{}", loaded.render(&database));
     }
     ExitCode::SUCCESS
 }
@@ -85,6 +98,7 @@ fn examine(table: &'static CompatibilityTable, cli: &Cli) -> ExitCode {
 fn dispatch_tool(
     table: &'static CompatibilityTable,
     cli: &Cli,
+    mutating: bool,
     payload: Option<PayloadMode>,
     tool: &str,
     args: &[String],
@@ -121,7 +135,23 @@ fn dispatch_tool(
         eprintln!("{skew}");
     }
 
-    match dispatcher.run(cleared, args, asked) {
+    // Asked after the guard, because whether this face speaks for a tool at all comes before
+    // which database it would be about — and answered before the exec, so a command that has no
+    // source it may use never reaches the tool.
+    let handover = match hand_over(cli, dispatcher.directory(), mutating) {
+        Ok(handover) => handover,
+        Err(problem) => {
+            return report_refusal(
+                cli,
+                command,
+                tool,
+                problem.exit(),
+                problem.message().to_owned(),
+            );
+        },
+    };
+
+    match dispatcher.run(cleared, args, asked, &handover) {
         Ok(outcome) => {
             if cli.json {
                 if asked == Asked::Json && outcome.payload().kind() != PayloadKind::Json {
@@ -142,6 +172,27 @@ fn dispatch_tool(
             format!("fraise could not run {tool}: {error}"),
         ),
     }
+}
+
+/// What this invocation says about where its DSN comes from.
+fn flags(cli: &Cli, mutating: bool) -> Flags<'_> {
+    Flags {
+        environment: cli.environment.as_deref(),
+        variable: cli.database_url_env.as_deref(),
+        mutating,
+    }
+}
+
+/// The DSN this command runs against, under the names the stack reads it by.
+///
+/// The document is read here rather than at the top of the command: `fraise tool` reaches a tool
+/// whether or not the directory is a project — that is what makes it the fallback this face
+/// promises — but a document that is there is read, and read whole, because a command about to
+/// touch a database must not be the one that ignored the file saying which database.
+fn hand_over(cli: &Cli, directory: &Path, mutating: bool) -> Result<Handover, Problem> {
+    let config = Config::find(directory)?;
+    let declared = config.as_ref().map_or(Declared::NoDocument, Config::declared);
+    dsn::resolve(flags(cli, mutating), declared, &Process)?.handover(&Process)
 }
 
 /// What `fraise` is asking the tool for on this invocation.

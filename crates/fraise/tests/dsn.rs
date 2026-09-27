@@ -375,7 +375,12 @@ fn the_ladder_is_confitures_precedence_contract_through_this_faces_inputs() {
             } => {
                 let payload = case.database(row.args, row.vars);
                 let database = &payload["database"];
-                assert_eq!(database["rung"], serde_json::json!(rung), "{}: {database:#}", row.about);
+                assert_eq!(
+                    database["rung"],
+                    serde_json::json!(rung),
+                    "{}: {database:#}",
+                    row.about
+                );
                 assert_eq!(
                     database["environment"],
                     environment.map_or(serde_json::Value::Null, |name| serde_json::json!(name)),
@@ -475,7 +480,10 @@ fn the_dsn_reaches_the_tool_under_every_name_the_stack_reads_it_by() {
         "DATABASE_URL",
         "PRINTOPTIM_LOCAL_DATABASE_URL",
     ] {
-        assert!(handed.contains(&format!("{name}=[{DSN}]")), "{name} was not handed over: {handed}");
+        assert!(
+            handed.contains(&format!("{name}=[{DSN}]")),
+            "{name} was not handed over: {handed}"
+        );
     }
     assert!(
         handed.contains("PRINTOPTIM_STAGING_DATABASE_URL=[]"),
@@ -519,10 +527,8 @@ fn a_mutating_invocation_refuses_an_ambient_dsn_and_says_what_would_name_one() {
     let case = Case::new("mutating-ambient", NO_DEFAULT);
     case.tool("confiture", "confiture version 1.19.0");
 
-    let output = case.fraise(
-        &["tool", "--mutating", "confiture", "migrate", "up"],
-        &[("DATABASE_URL", DSN)],
-    );
+    let output = case
+        .fraise(&["tool", "--mutating", "confiture", "migrate", "up"], &[("DATABASE_URL", DSN)]);
     assert_eq!(
         output.status.code(),
         Some(REFUSED),
@@ -532,7 +538,10 @@ fn a_mutating_invocation_refuses_an_ambient_dsn_and_says_what_would_name_one() {
     assert_eq!(case.ran("confiture"), None, "and it is refused before the tool runs");
 
     let stderr = String::from_utf8_lossy(&output.stderr).into_owned();
-    assert!(stderr.contains("DATABASE_URL"), "the refusal names what it would not use: {stderr}");
+    assert!(
+        stderr.contains("DATABASE_URL"),
+        "the refusal names what it would not use: {stderr}"
+    );
     assert!(
         stderr.contains("--environment") && stderr.contains("--database-url-env"),
         "and what would name a source instead: {stderr}"
